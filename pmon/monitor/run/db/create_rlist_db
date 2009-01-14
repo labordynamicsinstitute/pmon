@@ -1,0 +1,306 @@
+-- *****************************************************
+-- SQLite Code to create a template for pmon daemon db
+-- Overview:
+-- Create jobs table (dlabel is crucial variable)
+-- Set triggers for various events
+-- Create jobslog table to track transactions
+-- Usage:
+-- $ sqlite3 dbname < create_rlist_db 
+-- *****************************************************
+CREATE TABLE jobs (rkey INTEGER PRIMARY KEY,
+                   dlabel TEXT NOT NULL DEFAULT "none",
+                   pre_cmd TEXT NOT NULL DEFAULT "pre.bash",
+                   pre_args TEXT NOT NULL DEFAULT "none",
+                   pre_stat TEXT NOT NULL DEFAULT "nostart"
+                            CHECK(pre_stat IN ("nostart","run","fail","finish")),
+                   pre_start TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   pre_stop TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   pre_fail_count INTEGER NOT NULL DEFAULT 0,
+                   pre_exit_status INTEGER NOT NULL DEFAULT 0,
+                   pre_runtime REAL NOT NULL DEFAULT 0,
+                   main_cmd TEXT NOT NULL DEFAULT "main.bash",
+                   main_args TEXT NOT NULL DEFAULT "none",
+                   main_stat TEXT NOT NULL DEFAULT "nostart"
+                             CHECK(main_stat IN ("nostart","run","fail","finish")),
+                   main_start TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   main_stop TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   main_fail_count INTEGER NOT NULL DEFAULT 0,
+                   main_exit_status INTEGER NOT NULL DEFAULT 0,
+                   main_runtime REAL NOT NULL DEFAULT 0,
+                   post_cmd TEXT NOT NULL DEFAULT "post.bash",
+                   post_args TEXT NOT NULL DEFAULT "none",
+                   post_stat TEXT NOT NULL DEFAULT "nostart" 
+                             CHECK(post_stat IN ("nostart","run","fail","finish")),
+                   post_start TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   post_stop TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   post_fail_count INTEGER NOT NULL DEFAULT 0,
+                   post_exit_status INTEGER NOT NULL DEFAULT 0,
+                   post_runtime REAL NOT NULL DEFAULT 0,
+                   status TEXT NOT NULL DEFAULT "nostart"
+                          CHECK(status IN ("nostart","pre","main","post","fail","finish")),
+                   runtime real NOT NULL DEFAULT 0,
+                   cleanup TEXT NOT NULL DEFAULT "no" CHECK(cleanup IN ("yes","no")),
+                   pid_file TEXT NOT NULL DEFAULT "pid_0000_0000",
+                   pid INTEGER NOT NULL DEFAULT 0,
+                   tstart TEXT NOT NULL DEFAULT "no" CHECK(tstart IN ("yes","no")),
+                   tfinish TEXT NOT NULL DEFAULT "no" CHECK(tfinish IN ("yes","no")));
+
+-- *****************************************************
+-- transaction tfinish trigger
+-- *****************************************************
+CREATE TRIGGER yes_tfinish AFTER UPDATE OF tstart ON jobs
+BEGIN
+   UPDATE jobs SET tfinish = "no"
+      WHERE rowid=new.rowid;
+END;
+
+-- *****************************************************
+-- pre_stat variable triggers
+-- *****************************************************
+CREATE TRIGGER update_pre_nostart AFTER UPDATE OF pre_stat ON jobs
+BEGIN
+   UPDATE jobs SET pre_start = DATETIME("now"), pre_stop = DATETIME("now"),
+   pre_fail_count = 0, pre_exit_status =0, pre_runtime=0,
+   main_start = DATETIME("now"), main_stop = DATETIME("now"),
+   main_fail_count = 0, main_exit_status =0, main_runtime=0,
+   post_start = DATETIME("now"), post_stop = DATETIME("now"),
+   post_fail_count = 0, post_exit_status =0, post_runtime=0,
+   status="nostart", main_stat="nostart", post_stat="nostart",
+   runtime=0, pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.pre_stat="nostart";
+END;
+CREATE TRIGGER update_pre_run AFTER UPDATE OF pre_stat ON jobs
+BEGIN
+   UPDATE jobs SET pre_start = DATETIME("now"), status="pre"
+      WHERE rowid=new.rowid and new.pre_stat="run";
+END;
+CREATE TRIGGER update_pre_fail AFTER UPDATE OF pre_stat ON jobs
+BEGIN
+   UPDATE jobs SET pre_stop = DATETIME("now"), pre_fail_count = pre_fail_count + 1,
+   status="pre",pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.pre_stat="fail";
+END;
+CREATE TRIGGER update_pre_finish AFTER UPDATE OF pre_stat ON jobs
+BEGIN
+   UPDATE jobs SET pre_stop = DATETIME("now"), status="main",
+   pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.pre_stat="finish";
+END;
+
+-- *****************************************************
+-- main_stat variable triggers
+-- *****************************************************
+CREATE TRIGGER update_main_nostart AFTER UPDATE OF main_stat ON jobs
+BEGIN
+   UPDATE jobs SET main_start = DATETIME("now"), main_stop = DATETIME("now"),
+   main_fail_count = 0, main_exit_status =0, main_runtime=0,
+   post_start = DATETIME("now"), post_stop = DATETIME("now"),
+   post_fail_count = 0, post_exit_status =0, post_runtime=0,
+   status="main", post_stat="nostart", runtime=0, pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.main_stat="nostart" and pre_stat="finish";
+END;
+CREATE TRIGGER update_main_run AFTER UPDATE OF main_stat ON jobs
+BEGIN
+   UPDATE jobs SET main_start = DATETIME("now"), status="main"
+      WHERE rowid=new.rowid and new.main_stat="run" and pre_stat="finish";
+END;
+CREATE TRIGGER update_main_fail AFTER UPDATE OF main_stat ON jobs
+BEGIN
+   UPDATE jobs SET main_stop = DATETIME("now"), main_fail_count = main_fail_count + 1, status="main",
+   pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.main_stat="fail" and pre_stat="finish";
+END;
+CREATE TRIGGER update_main_finish AFTER UPDATE OF main_stat ON jobs
+BEGIN
+   UPDATE jobs SET main_stop = DATETIME("now"), status="post",
+   pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.main_stat="finish" and pre_stat="finish";
+END;
+
+-- *****************************************************
+-- post_stat variable triggers
+-- *****************************************************
+CREATE TRIGGER update_post_nostart AFTER UPDATE OF post_stat ON jobs
+BEGIN
+   UPDATE jobs SET post_start = DATETIME("now"), post_stop = DATETIME("now"),
+   post_fail_count = 0, post_exit_status =0, post_runtime=0,
+   status="post", runtime=0,pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.post_stat="nostart" and pre_stat="finish" and main_stat="finish";
+END;
+CREATE TRIGGER update_post_run AFTER UPDATE OF post_stat ON jobs
+BEGIN
+   UPDATE jobs SET post_start = DATETIME("now"), status="post"
+      WHERE rowid=new.rowid and new.post_stat="run" and pre_stat="finish" and main_stat="finish";
+END;
+CREATE TRIGGER update_post_fail AFTER UPDATE OF post_stat ON jobs
+BEGIN
+   UPDATE jobs SET post_stop = DATETIME("now"), post_fail_count = post_fail_count + 1,
+   status="post", pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.post_stat="fail" and pre_stat="finish" and main_stat="finish";
+END;
+CREATE TRIGGER update_post_finish AFTER UPDATE OF post_stat ON jobs
+BEGIN
+   UPDATE jobs SET post_stop = DATETIME("now"), status="finish",
+      pid=0, pid_file="pid_0000_0000"
+      WHERE rowid=new.rowid and new.post_stat="finish" and pre_stat="finish" and main_stat="finish";
+   UPDATE jobs SET
+   pre_runtime=(julianday(pre_stop)-julianday(pre_start))*24,
+   main_runtime=(julianday(main_stop)-julianday(main_start))*24,
+   post_runtime=(julianday(post_stop)-julianday(post_start))*24
+      WHERE rowid=new.rowid and new.post_stat="finish" and pre_stat="finish" and main_stat="finish";
+   UPDATE jobs SET
+   runtime=pre_runtime+main_runtime+post_runtime
+      WHERE rowid=new.rowid and new.post_stat="finish" and pre_stat="finish" and main_stat="finish";
+END;
+
+-- *****************************************************
+-- pre_fail_count variable triggers
+-- *****************************************************
+CREATE TRIGGER update_pre_fail_status AFTER UPDATE OF pre_fail_count ON jobs
+BEGIN
+   UPDATE jobs SET status="fail",
+   pre_runtime=(julianday(pre_stop)-julianday(pre_start))*24
+      WHERE rowid=new.rowid and new.pre_fail_count>2;
+   UPDATE jobs SET
+   runtime=pre_runtime
+      WHERE rowid=new.rowid and new.pre_fail_count>2;
+END;
+
+-- *****************************************************
+-- main_fail_count variable triggers
+-- *****************************************************
+CREATE TRIGGER update_main_fail_status AFTER UPDATE OF main_fail_count ON jobs
+BEGIN
+   UPDATE jobs SET status="fail",
+   pre_runtime=(julianday(pre_stop)-julianday(pre_start))*24,
+   main_runtime=(julianday(main_stop)-julianday(main_start))*24
+      WHERE rowid=new.rowid and new.main_fail_count>2;
+   UPDATE jobs SET
+   runtime=pre_runtime+main_runtime
+      WHERE rowid=new.rowid and new.main_fail_count>2;
+END;
+
+-- *****************************************************
+-- post_fail_count variable triggers
+-- *****************************************************
+CREATE TRIGGER update_post_fail_status AFTER UPDATE OF post_fail_count ON jobs
+BEGIN
+   UPDATE jobs SET status="fail",
+   pre_runtime=(julianday(pre_stop)-julianday(pre_start))*24,
+   main_runtime=(julianday(main_stop)-julianday(main_start))*24,
+   post_runtime=(julianday(post_stop)-julianday(post_start))*24
+      WHERE rowid=new.rowid and new.post_fail_count>2;
+   UPDATE jobs SET
+   runtime=pre_runtime+main_runtime+post_runtime
+      WHERE rowid=new.rowid and new.post_fail_count>2;
+END;
+
+
+-- *****************************************************
+-- jobslog table: Keeps track of all modifications to jobs
+-- *****************************************************
+
+
+CREATE TABLE jobslog (lkey INTEGER PRIMARY KEY,
+                      rkey INTEGER,
+                      dlabel TEXT,
+                      pre_stat TEXT,
+                      pre_start TEXT,
+                      pre_stop TEXT,
+                      pre_fail_count INTEGER,
+                      pre_exit_status INTEGER,
+                      main_stat TEXT,
+                      main_start TEXT,
+                      main_stop TEXT,
+                      main_fail_count INTEGER,
+                      main_exit_status INTEGER,
+                      post_stat TEXT,
+                      post_start TEXT,
+                      post_stop TEXT,
+                      post_exit_status INTEGER,
+                      status TEXT,
+                      pid_file TEXT,
+                      pid INTEGER,
+                      new_rkey INTEGER,
+                      new_dlabel TEXT,
+                      new_pre_stat TEXT,
+                      new_pre_start TEXT,
+                      new_pre_stop TEXT,
+                      new_pre_fail_count INTEGER,
+                      new_pre_exit_status INTEGER,
+                      new_main_stat TEXT,
+                      new_main_start TEXT,
+                      new_main_stop TEXT,
+                      new_main_fail_count INTEGER,
+                      new_main_exit_status INTEGER,
+                      new_post_stat TEXT,
+                      new_post_start TEXT,
+                      new_post_stop TEXT,
+                      new_post_exit_status INTEGER,
+                      new_status TEXT,
+                      new_pid_file TEXT,
+                      new_pid INTEGER,
+                      sql_action TEXT,
+                      time_action TEXT);
+
+-- *****************************************************
+-- Create an update trigger
+-- *****************************************************
+CREATE TRIGGER update_jobslog AFTER UPDATE ON jobs
+BEGIN
+   INSERT INTO jobslog (rkey, dlabel, pre_stat, pre_start, pre_stop,
+               pre_fail_count, pre_exit_status, main_stat, main_start,
+               main_stop, main_fail_count, main_exit_status, post_stat,
+               post_start, post_stop, post_exit_status, status, pid_file, pid,
+               new_rkey, new_dlabel, new_pre_stat, new_pre_start, new_pre_stop,
+               new_pre_fail_count, new_pre_exit_status, new_main_stat, new_main_start,
+               new_main_stop, new_main_fail_count, new_main_exit_status, new_post_stat,
+               new_post_start, new_post_stop, new_post_exit_status, new_status,
+               new_pid_file, new_pid, sql_action, time_action)
+
+       values(old.rkey, old.dlabel, old.pre_stat, old.pre_start, old.pre_stop,
+       old.pre_fail_count, old.pre_exit_status, old.main_stat, old.main_start,
+       old.main_stop, old.main_fail_count, old.main_exit_status, old.post_stat,
+       old.post_start, old.post_stop, old.post_exit_status, old.status,
+       old.pid_file, old.pid,
+       new.rkey, new.dlabel, new.pre_stat, new.pre_start, new.pre_stop,
+       new.pre_fail_count, new.pre_exit_status, new.main_stat, new.main_start,
+       new.main_stop, new.main_fail_count, new.main_exit_status, new.post_stat,
+       new.post_start, new.post_stop, new.post_exit_status, new.status,
+       new.pid_file, new.pid, "UPDATE", DATETIME("NOW"));
+END;
+
+-- *****************************************************
+-- Create an insert trigger
+-- *****************************************************
+CREATE TRIGGER insert_jobslog AFTER INSERT ON jobs
+BEGIN
+   INSERT INTO jobslog (new_rkey, new_dlabel, new_pre_stat, new_pre_start, new_pre_stop,
+               new_pre_fail_count, new_pre_exit_status, new_main_stat, new_main_start,
+               new_main_stop, new_main_fail_count, new_main_exit_status, new_post_stat,
+               new_post_start, new_post_stop, new_post_exit_status, new_status,
+               new_pid_file, new_pid, sql_action, time_action)
+
+       values(new.rkey, new.dlabel, new.pre_stat, new.pre_start, new.pre_stop,
+       new.pre_fail_count, new.pre_exit_status, new.main_stat, new.main_start,
+       new.main_stop, new.main_fail_count, new.main_exit_status, new.post_stat,
+       new.post_start, new.post_stop, new.post_exit_status, new.status,
+       new.pid_file, new.pid, "INSERT", DATETIME("NOW"));
+END;
+
+-- *****************************************************
+-- Create a delete trigger
+-- *****************************************************
+CREATE TRIGGER delete_jobslog AFTER DELETE ON jobs
+BEGIN
+   INSERT INTO jobslog (rkey, dlabel, pre_stat, pre_start, pre_stop,
+               pre_fail_count, pre_exit_status, main_stat, main_start,
+               main_stop, main_fail_count, main_exit_status, post_stat,
+               post_start, post_stop, post_exit_status, status, pid_file, pid)
+
+       values(old.rkey, old.dlabel, old.pre_stat, old.pre_start, old.pre_stop,
+       old.pre_fail_count, old.pre_exit_status, old.main_stat, old.main_start,
+       old.main_stop, old.main_fail_count, old.main_exit_status, old.post_stat,
+       old.post_start, old.post_stop, old.post_exit_status, old.status,
+       old.pid_file, old.pid, "DELETE", DATETIME("NOW"));
+END;

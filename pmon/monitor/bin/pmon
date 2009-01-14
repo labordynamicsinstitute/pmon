@@ -1,0 +1,470 @@
+#!/bin/bash
+# Pmon Version 0.2
+# Process Monitor Daemon
+#*********************************************************
+# Overview
+# 1. Run Basic Setup Sanity Checks Before Launching Daemon
+# 2. If Checks are OK then Launch Daemon
+# 3. Enter the Main Daemon Code
+# 4. Signal and Error Handling
+# 5. Functions Used in Main Daemon While Loop
+# 6. The Main Daemon While Loop
+#*********************************************************
+
+#*********************************************************
+#*** Run Basic Sanity Checks Before Launching Daemon
+#*********************************************************
+
+if [ "$1" != "setsidxxx" ]
+then
+   cur=$(pwd)
+   cd $(dirname $0)
+   confdir=$(dirname $(pwd $(dirname $0)))
+   cd $cur
+   # Read config file
+   if [ -f ${confdir}/library/config/pmon.conf ]
+   then
+      source ${confdir}/library/config/pmon.conf 
+   else
+      echo "pmon: ERROR"
+      echo "pmon.conf does not exist"
+      exit 1
+   fi
+   if (( ($plimit > 0) && ($plimit < 100) ))
+   then
+      true
+   else
+      echo "pmon: ERROR"
+      echo "Error in pmon.conf: 0<plimit<100 is required"
+      exit 1
+   fi
+   if (( ($nadj >= 0) && ($nadj < 20) ))
+   then
+      true
+   else
+      echo "pmon: ERROR"
+      echo "Error in pmon.conf: 0<=nadj<20 is required"
+      exit 1
+   fi
+   if [ -d $confdir ]
+   then
+      cdir=${confdir%%/}
+      if [ -d ${cdir}/library ] && [ -d ${cdir}/run/log ] && [ -d ${cdir}/run/pid ]
+      then
+         true
+      else
+         echo "pmon: ERROR"
+         echo "Directory structure is incorrect: check library run/log run/pid"
+         exit 1
+      fi
+      if [ "${cdir}/library/config/pmon.conf" = "${confdir}/library/config/pmon.conf" ]
+      then
+         true
+      else
+         echo "pmon: ERROR"
+         echo "pmon.conf argument is not in the proper location within confdir"
+         exit 1
+      fi
+   else
+      echo "pmon: ERROR"
+      echo "Error in pmon.conf: confdir does not exist"
+      exit 1
+   fi
+   if [ -f ${cdir}/run/db/${dbname} ]
+   then
+      tbl=( $(sqlite3 ${cdir}/run/db/${dbname} .tables) )
+      if [ "${tbl[0]}" = "jobs" ] && [ "${tbl[1]}" = "jobslog" ]
+      then
+         true
+      else
+         echo "pmon: ERROR"
+         echo "Error in pmon.conf: db structure is incorrect"
+         exit 1
+      fi
+   else
+      echo "pmon: ERROR"
+      echo "Error in pmon.conf: dbname does not exist"
+      exit 1
+   fi
+   if [ -d $jobdir ]
+   then
+      jdir=${jobdir%%/}
+   else
+      echo "pmon: ERROR"
+      echo "Error in pmon.conf: jobdir does not exist"
+      exit 1
+   fi
+   # Check Database for a clean exit
+   rkeys=( $(sqlite3 ${cdir}/run/db/${dbname} "SELECT rkey FROM jobs WHERE tstart='yes' AND tfinish='no'") )
+   if (( ${#rkeys[@]} > 0 ))
+   then
+      echo "pmon: ERROR"
+      echo "Database is unclean"
+      exit 1
+   fi
+   unset rkeys
+   rkeys=( $(sqlite3 ${cdir}/run/db/${dbname} "SELECT rkey FROM jobs WHERE tstart='no' AND tfinish='yes'") )
+   if (( ${#rkeys[@]} > 0 ))
+   then
+      echo "pmon: ERROR"
+      echo "Database is unclean"
+      exit 1
+   fi
+   unset rkeys
+   echo " "
+   echo "Configuration passed basic sanity checks"
+   echo " "
+   echo "---------------------------------------------------------"
+   echo "Launching pmon daemon in 5 seconds"
+   echo "plmit= $plimit"
+   echo "nadj= $nadj"
+   echo "confdir= $confdir"
+   echo "dbname= $dbname"
+   echo "jobdir= $jobdir"
+   echo "---------------------------------------------------------"
+   echo " "
+   echo "To stop pmon from launching type <ctrl>-C"
+   echo " "
+   sleep 5
+   # LAUNCH DAEMON HERE
+   # Don't forget the ampersand at the end of the following statement.
+   ssidbin=$(type -p setsid)
+   if [ "${ssidbin}" == "" ]
+   then
+      echo "pmon: ERROR"
+      echo "setsid not found"
+      exit 1
+   else
+      ${ssidbin} ${cdir}/bin/pmon setsidxxx < /dev/null >> ${cdir}/run/log/pmon.log 2>> ${cdir}/run/log/pmon.log &
+   fi
+   echo $! > ${cdir}/run/pmon.pid
+   exit 0
+fi
+
+shift
+
+#*********************************************************
+#*** The Daemon Code Begins Here 
+#*********************************************************
+
+# Read config file
+cur=$(pwd)
+cd $(dirname $0)
+confdir=$(dirname $(pwd $(dirname $0)))
+cd $cur
+source ${confdir}/library/config/pmon.conf
+cdir=${confdir%%/}
+jdir=${jobdir%%/}
+plim=${plimit}
+nval=${nadj}
+dname=${cdir}/run/db/${dbname}
+
+# Set default value of pause
+pause=no
+
+#Set umask appropriately
+umask $pmask
+
+# Don't want to prevent umount
+cd /
+
+# Write basic pmon info to the log
+echo " "
+echo "---------------------------------------------------------"
+echo "New pmon daemon started: " $(date -u)
+echo "plmit= $plimit"
+echo "nadj= $nadj"
+echo "confdir= $confdir"
+echo "dbname= $dbname"
+echo "jobdir= $jobdir"
+echo "---------------------------------------------------------"
+echo " "
+
+#*********************************************************
+#*** Signal and Error Handling
+#*********************************************************
+
+function fstop {
+  echo "fstop function called"
+  unset rkeys
+  rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0") )
+  for i in "${rkeys[@]}"; do
+     pid=$(sqlite3 ${dname} "SELECT pid FROM jobs WHERE rkey = ${i}")
+     pid_file=$(sqlite3 ${dname} "SELECT pid_file FROM jobs WHERE rkey=${i}")
+     status=$(sqlite3 ${dname} "SELECT status FROM jobs WHERE rkey=${i}")
+     unset apid
+     apid=( $(ps -o pid --ppid ${pid} | grep -v PID | tr '[0-9]' '[0-9]') )
+     kill ${pid}
+     echo "fstop: PID= ${pid} killed"
+     if (( ${#apid[@]} > 0 ))
+     then
+        for j in "${apid[@]}"; do
+           kill ${j}
+           echo "fstop: PPID= ${pid} PID= ${j} killed"
+        done
+     fi
+     rc_status=$(cat ${cdir}/run/pid/${pid_file})
+     sqlite3 ${dname} "update jobs set ${status}_stat='fail', ${status}_exit_status=${rc_status} where rkey=${i}"
+  done
+  if [ -f "${dname}.lockfile" ] 
+  then
+     pnum=$(cat "${dname}.lockfile")
+     if [ "${pnum}" == "" ]
+     then 
+        echo "ERROR: lockfile has no PID"
+     else
+        if (( $$ == $pnum ))
+        then
+           echo "PID= $$: Removing DB Lock File: " $(date -u)
+           rm -f ${dname}.lockfile
+        fi
+        if (( 0 == $pnum ))
+        then
+           echo "PID= $$: Removing DB Lock File: " $(date -u)
+           rm -f ${dname}.lockfile
+        fi
+     fi
+  fi
+  echo "Pmon killed: " $(date -u)   
+  exit 0
+}
+
+function freload {
+  echo "freload function called"
+  source ${cdir}/library/config/pmon.conf
+  echo " "
+  echo "---------------------------------------------------------"
+  echo "pmon config file reloaded: " $(date -u)
+  echo "plmit= $plimit"
+  echo "nadj= $nadj"
+  echo "confdir= $confdir"
+  echo "dbname= $dbname"
+  echo "jobdir= $jobdir"
+  echo "---------------------------------------------------------"
+  echo " "
+}
+
+function fpause {
+  echo "fpause function called"
+  pause=yes
+  echo "Job Launching Paused: " $(date -u)
+}
+
+function fresume {
+  echo "fresume function called"
+  pause=no
+  echo "Job launching Resumed: " $(date -u)  
+}
+
+function errtrap {
+   es=$?
+   cmd=$(sed -n -e "${1},${1} p" ${cdir}/bin/$0)
+   echo "ERROR line $1: $cmd"
+   echo "ERROR line $1: Command exited with status $es"
+}
+
+#trap fstop INT QUIT TERM TSTP
+trap fstop EXIT
+trap freload HUP
+trap fpause USR1
+trap fresume USR2 
+trap 'errtrap $LINENO' ERR
+
+#*********************************************************
+#*** Functions Used in Main Daemon While Loop
+#*********************************************************
+
+function padd {
+   if [ "${1}" == "nostart" ]
+   then
+      sect="pre"
+   else
+      sect=$1
+   fi
+   sqlite3 ${dname} "update jobs set tstart='yes' where rkey=${i}"
+   dlabel=$(sqlite3 ${dname} "SELECT dlabel FROM jobs WHERE rkey = ${i}")
+   rcmd=$(sqlite3 ${dname} "SELECT ${sect}_cmd FROM jobs WHERE rkey = ${i}")
+   rargs=$(sqlite3 ${dname} "SELECT ${sect}_args FROM jobs WHERE rkey = ${i}")
+   if [ "${1}" == "nostart" ]
+   then 
+      mkdir -p ${jdir}/${dlabel}
+   fi
+   if (( ${#dlabel} > 0 )) && (( ${#rcmd} > 0 )) && (( ${#rargs} ))
+   then
+      nice  -n $nval ${cdir}/library/scripts/${rcmd} ${jdir} ${dlabel} ${cdir} ${rargs} < /dev/null >> ${jdir}/${dlabel}/${sect}.log 2>> ${jdir}/${dlabel}/${sect}.log &
+      if (( ${?} == 0 ))
+      then 
+         pid=$!
+         pid_file=pid_${sect}_${pid}
+         sqlite3 ${dname} "update jobs set ${sect}_stat='run', pid=$pid, pid_file='${pid_file}' where rkey=${i}"
+         sqlite3 ${dname} "update jobs set tfinish='yes' where rkey=${i}"
+         echo  "Job Launch Successful: rkey= " ${i} "sect= " ${1} "pid= " ${pid}
+      else
+         echo "Job Launch Failed: rkey= " ${i} "sect= " ${1}
+      fi
+   fi
+}
+
+#*********************************************************
+#*** Main Daemon While Loop
+#*********************************************************
+
+declare -i njobs
+
+while true
+do
+   # keep config file values constant within each loop iteration
+   cdir=${confdir%%/}
+   jdir=${jobdir%%/}
+   plim=${plimit}
+   nval=${nadj}
+   dname=${cdir}/run/db/${dbname}
+
+   # Check for existence of lock file
+   # If the file does not exist then create one
+   until ( set -o noclobber; echo "$$" > "${dname}.lockfile") 2> /dev/null;
+   do
+      echo "DB Lock File Exists: " $(date -u)
+      pnum=$(cat "${dname}.lockfile")
+      slptime=10
+      if [ "${pnum}" == "" ]
+      then
+         echo "ERROR: lockfile has no PID"
+      else
+         if (( $$ == $pnum ))
+         then
+            echo "PID= $$: Removing DB Lock File: " $(date -u)
+            rm -f ${dname}.lockfile
+         fi
+         if (( 0 == $pnum ))
+         then
+            slptime=60
+         fi
+      fi
+      sleep $slptime
+   done
+   echo "PID= $$: Creating DB Lock File: " $(date -u)
+
+   # Make a copy of the database before updating
+   cp -f ${dname} ${dname}.backup
+
+   unset rkeys
+   rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0") )
+   njobs=${#rkeys[@]}
+   echo "Entering Check for and Remove Process Loop: " $(date -u)
+   echo "Processing the following rkeys: " ${rkeys[@]}
+
+   ##### CHECK FOR AND THEN REMOVE FINISHED PROCESSES #####
+
+   for i in "${rkeys[@]}"; do
+      pid=$(sqlite3 ${dname} "SELECT pid FROM jobs WHERE rkey = ${i}")
+      dlabel=$(sqlite3 ${dname} "SELECT dlabel FROM jobs WHERE rkey = ${i}")
+      pidrun=$(ps -p $pid -o pid | grep -v PID | tr '[0-9]' '[0-9]')
+      if [ "$pidrun" == "" ]
+      then
+         sqlite3 ${dname} "update jobs set tstart='yes' where rkey=${i}"
+         pid_file=$(sqlite3 ${dname} "SELECT pid_file FROM jobs WHERE rkey=${i}") 
+         status=$(sqlite3 ${dname} "SELECT status FROM jobs WHERE rkey=${i}")
+         if (( ${#pid_file} > 0 )) && (( ${#status} > 0 ))
+         then
+            if [ -f ${cdir}/run/pid/${pid_file} ]
+            then
+               rc_status=$(cat ${cdir}/run/pid/${pid_file})
+               if (( $rc_status > 0 ))
+               then 
+                  echo  "Job Finished: " ${i} "dlabel= " $dlabel "pid= " $pid "status=fail " "rc_status= " $rc_status
+                  sqlite3 ${dname} "update jobs set ${status}_stat='fail', ${status}_exit_status=${rc_status} where rkey=${i}"
+               else
+                  echo  "Job Finished: " ${i} "dlabel= " $dlabel "pid= " $pid "status=finish " "rc_status= " $rc_status
+                  sqlite3 ${dname} "update jobs set ${status}_stat='finish', ${status}_exit_status=${rc_status} where rkey=${i}"
+               fi
+            else
+               echo  "Job Finished: dlabel= " $dlabel "pid= " $pid "status=fail99" "rc_status= " $rc_status
+               sqlite3 ${dname} "update jobs set ${status}_stat='fail', ${status}_exit_status=99 where rkey=${i}"
+            fi
+            sqlite3 ${dname} "update jobs set tfinish='yes' where rkey=${i}"
+            njobs=${njobs}-1
+         fi
+      fi
+   done
+
+   ####### ADD NEW PROCESSES ########
+
+   #Get number of new processes to add
+   if [ "$pause" = "no" ]
+   then
+      njobs=${plim}-${njobs}
+      echo " "
+      echo "Entering Add New Processes Loop: " $(date -u)
+      unset rkeys
+      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('pre') AND pre_stat IN ('fail') LIMIT ${njobs}") )
+      echo "Total processes to add: " ${njobs}
+      echo "Processing pre rkeys: " ${rkeys[@]}
+
+      if (( $njobs > 0 ))
+      then
+         ### Set PRE jobs to run status 
+         for i in "${rkeys[@]}"; do
+            padd pre
+         done
+      fi
+
+      njobs=$njobs-${#rkeys[@]} 
+      unset rkeys
+      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('main') AND main_stat IN ('nostart', 'fail') LIMIT ${njobs}") )
+      echo "Total processes to add: " ${njobs}
+      echo "Processing main rkeys: " ${rkeys[@]}
+
+      if (( $njobs > 0 ))
+      then
+          ### Set MAIN jobs to run status
+          for i in "${rkeys[@]}"; do
+             padd main
+         done
+      fi
+
+      njobs=$njobs-${#rkeys[@]}
+      unset rkeys
+      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('post') AND post_stat IN ('nostart', 'fail') LIMIT ${njobs}") )
+      echo "Total processes to add: " ${njobs}
+      echo "Processing post rkeys: " ${rkeys[@]}
+
+      if (( $njobs > 0 ))
+      then
+          ### Set POST jobs to run status
+          for i in "${rkeys[@]}"; do
+             padd post
+         done
+      fi
+
+      njobs=$njobs-${#rkeys[@]}
+      unset rkeys
+      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('nostart') AND pre_stat IN ('nostart') LIMIT ${njobs}") )
+      echo "Total processes to add: " ${njobs}
+      echo "Processing nostart rkeys: " ${rkeys[@]}
+
+      if (( $njobs > 0 ))
+      then
+          ### Set NOSTART jobs to run status
+          for i in "${rkeys[@]}"; do
+             padd nostart
+         done
+      fi
+   fi
+   if [ -f "${dname}.lockfile" ]
+   then
+      pnum=$(cat "${dname}.lockfile")
+      if [ "${pnum}" == "" ]
+      then
+         echo "ERROR: lockfile has no PID"
+      else
+         if (( $$ == $pnum ))
+         then
+            echo "PID= $$: Removing DB Lock File: " $(date -u)
+            rm -f ${dname}.lockfile
+         fi
+      fi
+   fi
+   echo "**************************************************************"
+   sleep 60
+done
