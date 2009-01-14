@@ -1,0 +1,472 @@
+#!/bin/bash
+# Pmon database query tool
+# Version 0.1
+
+#*********************************************************
+# Process Command Line Arguments
+#*********************************************************
+
+#*********************************************************
+# Determine whether the option was called
+#*********************************************************
+for i in "$@"; do
+   case "$i" in
+      -f) fn=yes ;;
+      -p) re=yes ;;
+      -d) dl=yes ;;
+     -sf) echo "pinfo: please put a space between all options"; exit 1;;
+     -sp) echo "pinfo: please put a space between all options"; exit 1;;
+     -sd) echo "pinfo: please put a space between all options"; exit 1;;
+   esac
+done
+
+if (( ${#@} == 0 ))
+then
+   summary=yes
+fi
+
+usage="Usage: pinfo [-h] [-s] [-f {dbfile}] [-p {all|active|fail|nostart|pre|main|post|finish}] [-d {dlabel}]"
+
+#*********************************************************
+# Parse Options
+#*********************************************************
+while getopts ":hsf:d:p:" opt; do
+   case "$opt" in
+      h ) help=yes ;;
+      s ) summary=yes ;;
+      f ) fname=$OPTARG ;;
+      p ) report=$OPTARG ;;
+      d ) dlabel=$OPTARG ;;
+      \?) echo $usage
+          exit 1 ;;
+   esac
+done
+# Default is to always use a new copy
+new=yes
+
+shift $(($OPTIND -1))
+
+if (( ${#@} > 0 ))
+then
+   echo $usage
+   exit 1
+fi
+
+# Read config file
+cur=$(pwd)
+cd $(dirname $0)
+confdir=$(dirname $(pwd $(dirname $0)))
+cd $cur
+source ${confdir}/library/config/pmon.conf
+cdir=${confdir%%/}
+
+#*********************************************************
+# Check Command Line Arguments
+#*********************************************************
+
+#echo "Command Line Args: " $@
+#echo "summary= " $summary
+#echo "fname used= " $fn
+#echo "f fname= " $fname
+#echo "p report= " $report
+#echo "d dlabel= " $dlabel
+#echo "h help= " $help 
+
+if [ "$help" == "yes" ]
+then
+   echo "pinfo: help option called, program exiting"
+   echo $usage
+   echo "See http://lservices.ciser.cornell.edu/mediawiki/index.php/KevPMON for more info"
+   exit 0
+fi
+
+if [ "$fn" == "yes" ]
+then
+   if [ -f "$fname" ]
+   then
+      fbu=$(echo ${fname} | grep pinfo)
+      if (( ${#fbu} == 0 ))
+      then
+         echo "Warning: only pinfo, not live databases are accessible"
+         exit 1
+      fi
+   else
+      echo "Warning: bad pinfo syntax, -f option database file does not exist"
+      exit 1
+   fi
+   unset new
+else
+   dname=${cdir}/run/db/${dbname}
+   fname=${cdir}/run/db/${dbname}.pinfo
+fi
+
+if [ "$re" == "yes" ] && [ "$dl" == "yes" ]
+then
+   echo "Warning: bad pinfo syntax, -p and -d cannot be used togther"
+   exit 1
+fi
+
+if [ "$re" == "yes" ]
+then
+   case "$report" in
+      all) true ;;
+      active) true ;;
+      fail) true ;;
+      nostart) true ;;
+      pre) true ;;
+      main) true ;;
+      post) true ;;
+      finish) true ;;
+      *) echo "Warning: bad pinfo syntax, -p option must be in {all|active|fail|nostart|pre|main|post|finish}"
+         exit 1 ;;
+   esac
+fi
+
+if [ "$dl" == "yes" ]
+then
+   if (( ${#dlabel} == 0 ))
+   then
+      echo "Warning: bad pinfo syntax, -d option requires a valid dlabel"
+   fi
+fi
+
+#*********************************************************
+# MAIN PROGRAM BEGINS HERE
+#*********************************************************
+
+#*********************************************************
+# When new is called make a fresh copy of db 
+# respecting existing lockfiles
+#*********************************************************
+
+if [ "$new" == "yes" ]
+then
+   ncp="yes"
+   if [ -f "${dname}.lockfile" ]
+   then
+      pnum=$(cat "${dname}.lockfile")
+   fi
+   if [ "${pnum}" == "" ]
+   then
+      true
+   else
+      if (( 0 == $pnum ))
+      then
+         echo "DB Lock File Exists, and is held by PID: "  $pnum
+         cp -f ${dname} ${fname}
+         echo "Copying Database File"
+         ncp="no"
+      fi
+   fi
+   if [ "$ncp" == "yes" ]
+   then
+      until ( set -o noclobber; echo "$$" > "${dname}.lockfile") 2> /dev/null;
+      do
+         pnum=$(cat "${dname}.lockfile")
+         pmon=$(cat "${cdir}/run/pmon.pid")
+         echo "DB Lock File Exists, and is held by PID: "  $pnum
+         slptime=5
+         if [ "${pnum}" == "" ] || [ "${pmon}" == "" ]
+         then
+            echo "ERROR: lockfile or pmon.pid has no PID"
+         else
+            if (( $pnum != $pmon )) && (( $pnum != 0 ))
+            then
+               echo "Removing DB Lock File"
+               rm -f ${dname}.lockfile
+            fi
+         fi
+         sleep $slptime
+      done
+      echo "Creating DB Lock File"
+      cp -f ${dname} ${fname}
+      echo "Copying Database File"
+      echo "Removing DB Lock File"
+      rm -f ${dname}.lockfile
+   fi
+fi
+
+# Make sure the db has the correct format
+
+if [ -f "$fname" ]
+then
+   tbl=( $(sqlite3 ${fname} .tables) )
+   if [ "${tbl[0]}" = "jobs" ] && [ "${tbl[1]}" = "jobslog" ]
+   then
+      true
+   else
+      echo "Warning: pinfo database structure is incorrect"
+      exit 1
+   fi
+else
+   echo "Warning: pinfo database file does not exist"
+   exit 1
+fi
+
+#*********************************************************
+#Trap Errors
+#*********************************************************
+
+function errtrap {
+   es=$?
+   cmd=$(sed -n -e "${1},${1} p" ${cdir}/bin/$0)
+   echo "ERROR line $1: $cmd"
+   echo "ERROR line $1: Command exited with status $es"
+}
+trap 'errtrap $LINENO' ERR
+
+#*********************************************************
+# Summary of database
+#*********************************************************
+
+if [ "$summary" == "yes" ]
+then
+  # Get the runtimes for each status level
+  pru=$(sqlite3 $fname "SELECT total((julianday('now')-julianday(pre_start))*24) from jobs WHERE status='pre' AND pre_stat='run';")
+  pfa=$(sqlite3 $fname "SELECT total((julianday(pre_stop)-julianday(pre_start))*24) from jobs WHERE status='pre' AND pre_stat='fail';")
+  pfi=$(sqlite3 $fname "SELECT total((julianday(pre_stop)-julianday(pre_start))*24) from jobs WHERE status='pre' AND pre_stat='finish';")
+  mru=$(sqlite3 $fname "SELECT total(((julianday(pre_stop)-julianday(pre_start))*24)+((julianday('now')-julianday(main_start))*24)) from jobs WHERE status='main' AND main_stat='run';")
+  mfa=$(sqlite3 $fname "SELECT total(((julianday(pre_stop)-julianday(pre_start))*24)+((julianday(main_stop)-julianday(main_start))*24)) from jobs WHERE status='main' AND main_stat='fail';")
+  mfi=$(sqlite3 $fname "SELECT total(((julianday(pre_stop)-julianday(pre_start))*24)+((julianday(main_stop)-julianday(main_start))*24)) from jobs WHERE status='main' AND main_stat='finish';")
+  tru=$(sqlite3 $fname "SELECT total(((julianday(pre_stop)-julianday(pre_start))*24)+((julianday(main_stop)-julianday(main_start))*24)+((julianday('now')-julianday(post_start))*24)) from jobs WHERE status='post' AND post_stat='run';")
+  tfa=$(sqlite3 $fname "SELECT total(((julianday(pre_stop)-julianday(pre_start))*24)+((julianday(main_stop)-julianday(main_start))*24)+((julianday(post_stop)-julianday(post_start))*24)) from jobs WHERE status='post' AND post_stat='fail';")
+  tfi=$(sqlite3 $fname "SELECT total(((julianday(pre_stop)-julianday(pre_start))*24)+((julianday(main_stop)-julianday(main_start))*24)+((julianday(post_stop)-julianday(post_start))*24)) from jobs WHERE status='post' AND post_stat='finish';")
+  fai=$(sqlite3 $fname "SELECT total(runtime) from jobs WHERE status='fail';")
+  fin=$(sqlite3 $fname "SELECT total(runtime) from jobs WHERE status='finish';")
+  tot=$(bc <<< "scale=3; ${pru}+${pfa}+${pfi}+${mru}+${mfa}+${mfi}+${tru}+${tfa}+${tfi}+${fai}+${fin}")
+  act=$(bc <<< "scale=3; ${pru}+${pfa}+${pfi}+${mru}+${mfa}+${mfi}+${tru}+${tfa}+${tfi}")
+
+  # Print out the results
+  echo "-----------------------------------------------------------------------------"
+  echo "pinfo: Summary Report (-s)"
+  echo "date :" $(date -u)
+  echo "file :" $fname
+  echo "-----------------------------------------------------------------------------"
+  echo "Run Group Overview"
+  echo "-----------------------------------------------------------------------------"
+  printf "%s \t %s \t %s\n" Category Count "Run Time(Hours)"
+  echo "-----------------------------------------------------------------------------"
+  printf "%s %d \t %8.8g\n" "TOTAL          :" $(sqlite3 $fname "SELECT COUNT(*) from jobs;") $tot
+  printf "%s %d \t %8.8g\n" "NOSTART        :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='nostart';") "0"
+  printf "%s %d \t %8.8g\n" "ACTIVE         :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status IN('pre','main','post');") $act
+  printf "%s %d \t %8.8g\n" "   pre_run     :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='pre' AND pre_stat='run';")  $pru
+  printf "%s %d \t %8.8g\n" "   pre_fail    :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='pre' AND pre_stat='fail';")  $pfa
+  printf "%s %d \t %8.8g\n" "   pre_finish  :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='pre' AND pre_stat='finish';")  $pfi
+  printf "%s %d \t %8.8g\n" "   main_run    :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='main' AND main_stat='run';")  $mru
+  printf "%s %d \t %8.8g\n" "   main_fail   :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='main' AND main_stat='fail';")  $mfa
+  printf "%s %d \t %8.8g\n" "   main_finish :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='main' AND main_stat='finish';")  $mfi
+  printf "%s %d \t %8.8g\n" "   post_run    :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='post' AND post_stat='run';")  $tru
+  printf "%s %d \t %8.8g\n" "   post_fail   :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='post' AND post_stat='fail';")  $tfa
+  printf "%s %d \t %8.8g\n" "   post_finish :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='post' AND post_stat='finish';")  $tfi
+  printf "%s %d \t %8.8g\n" "FAIL           :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='fail';")  $fai
+  printf "%s %d \t %8.8g\n" "FINISH         :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='finish';")  $fin
+  echo "-----------------------------------------------------------------------------"
+  echo " " 
+fi
+
+#*********************************************************
+# Detail report for various groups
+#*********************************************************
+
+if [ "$re" == "yes" ]
+then
+  # Print out the results
+  echo "-----------------------------------------------------------------------------"
+  echo "pinfo: Detailed Report (-p)"
+  echo "date :" $(date -u)
+  echo "file :" $fname
+  echo "-----------------------------------------------------------------------------"
+  echo $report "records"
+  echo "-----------------------------------------------------------------------------"
+  printf "%-10s %-8s %-8s %5s %2s %2s %-20s %8s\n" dlabel status stat2 pid rc fc "start time" "run time(hrs)"
+  echo "-----------------------------------------------------------------------------"
+
+  # Get the correct set of record ids
+  unset rkeys
+  case "$report" in
+     all) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs") ) ;;
+     active) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post')") ) ;;
+     fail) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs WHERE status='fail'") ) ;;
+     finish) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs WHERE status='finish'") ) ;;
+     nostart) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs WHERE status='nostart'") ) ;;
+     pre) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs WHERE status='pre'") ) ;;
+     main) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs WHERE status='main'") ) ;;
+     post) rkeys=( $(sqlite3 ${fname} "SELECT rkey FROM jobs WHERE status='post'") ) ;;
+  esac
+  if (( ${#rkeys[@]} == 0 ))
+  then
+     echo "No records found that meet selection criteria"
+  fi
+  for i in "${rkeys[@]}"; do
+     ## Item 1 (dlabel)
+     dlabel=$(sqlite3 ${fname} "SELECT dlabel FROM jobs WHERE rkey = ${i}")
+     ## Item 2 (status)
+     status=$(sqlite3 ${fname} "SELECT status FROM jobs WHERE rkey=${i}")
+     ## Item 3 (status2)
+     case "$status" in
+        nostart) stat2=$(sqlite3 ${fname} "SELECT pre_stat FROM jobs WHERE rkey = ${i}") ;;
+        pre) stat2=$(sqlite3 ${fname} "SELECT pre_stat FROM jobs WHERE rkey = ${i}") ;;
+        main) stat2=$(sqlite3 ${fname} "SELECT main_stat FROM jobs WHERE rkey = ${i}") ;;
+        post) stat2=$(sqlite3 ${fname} "SELECT post_stat FROM jobs WHERE rkey = ${i}") ;;
+        fail) fval=$(sqlite3 ${fname} "SELECT pre_stat FROM jobs WHERE rkey = ${i}")
+              stat2=pre
+              if [ "$fval" != "fail" ]
+              then
+                 fval=$(sqlite3 ${fname} "SELECT main_stat FROM jobs WHERE rkey = ${i}")
+                 stat2=main
+              fi
+              if [ "$fval" != "fail" ]
+              then
+                 stat2=post
+              fi ;;
+        finish) stat2=$(sqlite3 ${fname} "SELECT post_stat FROM jobs WHERE rkey = ${i}") ;;
+     esac
+     ## Item 4 (PID)
+     pid=$(sqlite3 ${fname} "SELECT pid FROM jobs WHERE rkey=${i}")
+     ## Item 5 (run status)
+     fpid=$(sqlite3 ${fname} "SELECT pid_file FROM jobs WHERE rkey = ${i}")
+     case "$status" in
+        nostart) estat=0 ;;
+        pre) estat=$(cat "${cdir}/run/pid/${fpid}") ;;
+        main) estat=$(cat "${cdir}/run/pid/${fpid}") ;;
+        post) estat=$(cat "${cdir}/run/pid/${fpid}") ;;
+        fail) fval=$(sqlite3 ${fname} "SELECT pre_stat FROM jobs WHERE rkey = ${i}")
+              estat=$(sqlite3 ${fname} "SELECT pre_exit_status FROM jobs WHERE rkey = ${i}")
+              if [ "$fval" != "fail" ]
+              then
+                 fval=$(sqlite3 ${fname} "SELECT main_stat FROM jobs WHERE rkey = ${i}")
+                 estat=$(sqlite3 ${fname} "SELECT main_exit_status FROM jobs WHERE rkey = ${i}")
+              fi
+              if [ "$fval" != "fail" ]
+              then
+                 estat=$(sqlite3 ${fname} "SELECT post_exit_status FROM jobs WHERE rkey = ${i}")
+              fi ;;
+        finish) estat=$(sqlite3 ${fname} "SELECT post_exit_status FROM jobs WHERE rkey = ${i}") ;;
+     esac
+     ## Item 6 (fail count)
+     case "$status" in
+        nostart) fcount=0 ;;
+        pre) fcount=$(sqlite3 ${fname} "SELECT pre_fail_count FROM jobs WHERE rkey = ${i}") ;;
+        main) fcount=$(sqlite3 ${fname} "SELECT pre_fail_count+main_fail_count FROM jobs WHERE rkey = ${i}") ;;
+        post) fcount=$(sqlite3 ${fname} "SELECT pre_fail_count+main_fail_count+post_fail_count FROM jobs WHERE rkey = ${i}") ;;
+        fail) fcount=$(sqlite3 ${fname} "SELECT pre_fail_count+main_fail_count+post_fail_count FROM jobs WHERE rkey = ${i}") ;;
+        finish) fcount=$(sqlite3 ${fname} "SELECT pre_fail_count+main_fail_count+post_fail_count FROM jobs WHERE rkey = ${i}") ;;
+     esac
+     ## Item 7 (start time)
+     case "$status" in
+        nostart) stime=0 ;;
+        pre) stime=$(sqlite3 ${fname} "SELECT pre_start FROM jobs WHERE rkey = ${i}") ;;
+        main) stime=$(sqlite3 ${fname} "SELECT main_start FROM jobs WHERE rkey = ${i}") ;;
+        post) stime=$(sqlite3 ${fname} "SELECT post_start FROM jobs WHERE rkey = ${i}") ;;
+        fail) stime=$(sqlite3 ${fname} "SELECT pre_start FROM jobs WHERE rkey = ${i}") ;;
+        finish) stime=$(sqlite3 ${fname} "SELECT pre_start FROM jobs WHERE rkey = ${i}") ;;
+     esac
+     ## Item 8 (run time)
+     case "$status" in
+        nostart) rtime=0 ;;
+        pre) rtime=$(sqlite3 ${fname} "SELECT (julianday('now')-julianday(pre_start))*24 FROM jobs WHERE rkey = ${i}") ;;
+        main) rtime=$(sqlite3 ${fname} "SELECT (julianday('now')-julianday(main_start))*24 FROM jobs WHERE rkey = ${i}") ;;
+        post) rtime=$(sqlite3 ${fname} "SELECT (julianday('now')-julianday(post_start))*24 FROM jobs WHERE rkey = ${i}") ;;
+        fail) rtime=$(sqlite3 ${fname} "SELECT runtime FROM jobs WHERE rkey = ${i}") ;;
+        finish) rtime=$(sqlite3 ${fname} "SELECT runtime FROM jobs WHERE rkey = ${i}") ;;
+     esac
+
+     printf "%-10s %-8s %-8s %5d %2d %2d %-20s %8.8g\n" $dlabel $status $stat2 $pid $estat $fcount "$stime" $rtime
+  done
+  echo "-----------------------------------------------------------------------------"
+  echo " "
+fi
+
+#*********************************************************
+# Detail report for ONE group
+# Specifically for detailed time reports 
+#*********************************************************
+
+if [ "$dl" == "yes" ]
+then
+  # Print out the results
+  echo "-----------------------------------------------------------------------------"
+  echo "pinfo: Single Group Report (-d)"
+  echo "date :" $(date -u)
+  echo "file :" $fname
+  echo "-----------------------------------------------------------------------------"
+  echo "Detailed Time Statistics"
+  echo "-----------------------------------------------------------------------------"
+  printf "%-10s type  %2s %-20s %-20s %8s\n" dlabel fc "start time" "stop time" "run time(hrs)"
+  echo "-----------------------------------------------------------------------------"
+  ## Item 1 (dlabel)
+  ## Item 2 (status)
+  status=$(sqlite3 ${fname} "SELECT status FROM jobs WHERE dlabel='$dlabel'")
+  if (( ${#status} == 0 ))
+  then
+     echo "Record with dlabel=$dlabel not found"
+  else
+     #### TOTAL ROW ####
+     ## Item 3 (fail count)
+     fcount=$(sqlite3 ${fname} "SELECT pre_fail_count+main_fail_count+post_fail_count FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 4 (start time)
+     stime=$(sqlite3 ${fname} "SELECT pre_start FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 5 (stop time)
+     ttime=$(sqlite3 ${fname} "SELECT post_stop FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 6 (run time)
+     rtime=$(sqlite3 ${fname} "SELECT runtime FROM jobs WHERE dlabel='$dlabel'")
+     printf "%-10s total %2d %-20s %-20s %8.8g\n" $dlabel $fcount "$stime" "$ttime" $rtime
+
+     #### PRE ROW ####
+     ## Item 3 (fail count)
+     fcount=$(sqlite3 ${fname} "SELECT pre_fail_count FROM jobs WHERE dlabel='$dlabel'")
+     ## (status2)
+     stat2=$(sqlite3 ${fname} "SELECT pre_stat FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 4 (start time)
+     stime=$(sqlite3 ${fname} "SELECT pre_start FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 5 (stop time)
+     ttime=$(sqlite3 ${fname} "SELECT pre_stop FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 6 (run time)
+     case "$stat2" in
+        nostart) rtime=0 ;;
+        run) rtime=$(sqlite3 ${fname} "SELECT (julianday('now')-julianday(pre_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+        fail) rtime=$(sqlite3 ${fname} "SELECT (julianday(pre_stop)-julianday(pre_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+        finish) rtime=$(sqlite3 ${fname} "SELECT (julianday(pre_stop)-julianday(pre_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+     esac
+     printf "%-10s pre   %2d %-20s %-20s %8.8g\n" $dlabel $fcount "$stime" "$ttime" $rtime
+
+     #### MAIN ROW ####
+     ## Item 3 (fail count)
+     fcount=$(sqlite3 ${fname} "SELECT main_fail_count FROM jobs WHERE dlabel='$dlabel'")
+     ## (status2)
+     stat2=$(sqlite3 ${fname} "SELECT main_stat FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 4 (start time)
+     stime=$(sqlite3 ${fname} "SELECT main_start FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 5 (stop time)
+     ttime=$(sqlite3 ${fname} "SELECT main_stop FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 6 (run time)
+     case "$stat2" in
+        nostart) rtime=0 ;;
+        run) rtime=$(sqlite3 ${fname} "SELECT (julianday('now')-julianday(main_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+        fail) rtime=$(sqlite3 ${fname} "SELECT (julianday(main_stop)-julianday(main_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+        finish) rtime=$(sqlite3 ${fname} "SELECT (julianday(main_stop)-julianday(main_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+     esac
+     printf "%-10s main  %2d %-20s %-20s %8.8g\n" $dlabel $fcount "$stime" "$ttime" $rtime
+
+     #### POST ROW ####
+     ## Item 3 (fail count)
+     fcount=$(sqlite3 ${fname} "SELECT post_fail_count FROM jobs WHERE dlabel='$dlabel'")
+     ## (status2)
+     stat2=$(sqlite3 ${fname} "SELECT post_stat FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 4 (start time)
+     stime=$(sqlite3 ${fname} "SELECT post_start FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 5 (stop time)
+     ttime=$(sqlite3 ${fname} "SELECT post_stop FROM jobs WHERE dlabel='$dlabel'")
+     ## Item 8 (run time)
+     case "$stat2" in
+        nostart) rtime=0 ;;
+        run) rtime=$(sqlite3 ${fname} "SELECT (julianday('now')-julianday(post_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+        fail) rtime=$(sqlite3 ${fname} "SELECT (julianday(post_stop)-julianday(post_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+        finish) rtime=$(sqlite3 ${fname} "SELECT (julianday(post_stop)-julianday(post_start))*24 FROM jobs WHERE dlabel='$dlabel'") ;;
+     esac
+     printf "%-10s post  %2d %-20s %-20s %8.8g\n" $dlabel $fcount "$stime" "$ttime" $rtime
+
+  fi
+  echo "-----------------------------------------------------------------------------"
+  echo " "
+fi

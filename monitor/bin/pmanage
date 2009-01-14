@@ -1,0 +1,274 @@
+#!/bin/bash
+# Management program for pmon daemon
+# Version 0.1
+
+#*********************************************************
+# Find location of bin and confdir directories
+#*********************************************************
+cur=$(pwd)
+cd $(dirname $0)
+confdir=$(dirname $(pwd $(dirname $0)))
+cd $cur
+
+#*********************************************************
+# Check for existence of pmon.conf
+#*********************************************************
+if [ -f ${confdir}/library/config/pmon.conf ]
+then
+   source ${confdir}/library/config/pmon.conf 
+   cdir=${confdir%%/}
+   jdir=${jobdir%%/}
+   plim=${plimit}
+   nval=${nadj}
+   dname=${cdir}/run/db/${dbname}
+else
+   echo "pmanage: ERROR"
+   echo "pmon.conf does not exist"
+   exit 1
+fi
+
+#*********************************************************
+#Process one allowed argument
+#*********************************************************
+case "$1" in
+   start)
+   # Start the daemon
+   if [ -f ${cdir}/run/pmon.pid ]
+   then
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      if (( ${#prunt} > 0 ))
+      then
+         echo "pmanage: ERROR"
+         echo "pmon is already running"
+         exit 1
+      fi
+      ${confdir}/bin/pmon ${confdir}/library/config/pmon.conf
+      sleep 1
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      echo " "
+      echo "Pmon has PID= " $prunt
+      echo " "
+   else
+      ${confdir}/bin/pmon ${confdir}/library/config/pmon.conf
+      sleep 1
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      echo " "
+      echo "Pmon has PID= " $prunt
+      echo " "
+   fi
+   ;;
+   stop)
+   # Stop the daemon
+   if [ -f ${cdir}/run/pmon.pid ]
+   then
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      if (( ${#prunt} == 0 ))
+      then
+         echo "pmanage: ERROR"
+         echo "pmon is not running"
+         exit 1
+      fi
+   else
+      echo "pmanage: ERROR"
+      echo "pmon is not running"
+      exit 1
+   fi
+   echo " "
+   echo "---------------------------------------------------------"
+   echo "Stopping pmon daemon in 5 seconds"
+   echo "location=  ${confdir}/bin/pmon"
+   echo "PID= " $prunt
+   echo "---------------------------------------------------------"
+   echo " "
+   echo "To stop pmon from being killed type <ctrl>-C"
+   sleep 5
+   kill ${prunt}
+   ;;
+   reload)
+   if [ -f ${cdir}/run/pmon.pid ]
+   then
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      if (( ${#prunt} == 0 ))
+      then
+         echo "pmanage: ERROR"
+         echo "pmon is not running"
+         exit 1
+      fi
+   else
+      echo "pmanage: ERROR"
+      echo "pmon is not running"
+      exit 1
+   fi
+   # Reload the config file
+   echo " "
+   echo "---------------------------------------------------------"
+   echo "Reloading pmon config file in 5 seconds"
+   echo "location=  ${confdir}/library/config/pmon.conf"
+   echo "PID= " $prunt
+   echo "---------------------------------------------------------"
+   echo " "
+   echo "To stop config file from being reloaded type <ctrl>-C"
+   sleep 5
+   kill -HUP ${prunt}
+   ;;
+   pause)
+   # Stop Launching new jobs
+   if [ -f ${cdir}/run/pmon.pid ]
+   then
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      if (( ${#prunt} == 0 ))
+      then
+         echo "pmanage: ERROR"
+         echo "pmon is not running"
+         exit 1
+      fi
+   else
+      echo "pmanage: ERROR"
+      echo "pmon is not running"
+      exit 1
+   fi
+   if [ -f "${dname}.lockfile" ]
+   then
+      pnum=$(cat "${dname}.lockfile")
+      if [ "$pnum" == "" ]
+      then
+         echo "pmanage: ERROR"
+         echo "DB lockfile does not contain a PID"
+         exit 1
+      else
+         if (( $prunt == $pnum ))
+         then
+            true
+         else
+            echo " "
+            echo "Warning: The current lockfile was not created by pmon"
+            echo "Warning: pinfo should not be used at this time"
+         fi
+      fi
+   fi
+   echo " "
+   echo "---------------------------------------------------------"
+   echo "Pausing pmon daemon in 5 seconds"
+   echo "location=  ${confdir}/bin/pmon"
+   echo "PID= " $prunt
+   echo "---------------------------------------------------------"
+   echo " "
+   echo "To continue launching new jobs type <ctrl>-C"
+   sleep 5
+   kill -USR1 ${prunt}
+   ;;
+   resume)
+   # Resume Launching new jobs
+   if [ -f ${cdir}/run/pmon.pid ]
+   then
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      if (( ${#prunt} == 0 ))
+      then
+         echo "pmanage: ERROR"
+         echo "pmon is not running"
+         exit 1
+      fi
+   else
+      echo "pmanage: ERROR"
+      echo "pmon is not running"
+      exit 1
+   fi
+   if [ -f "${dname}.lockfile" ]
+   then
+      pnum=$(cat "${dname}.lockfile")
+      if [ "$pnum" == "" ]
+      then
+         echo "pmanage: ERROR"
+         echo "DB lockfile does not contain a PID"
+         exit 1
+      else
+         if (( $prunt == $pnum ))
+         then
+            true
+         else
+            echo " "
+            echo "Warning: The current lockfile was not created by pmon"
+            echo "Warning: pinfo should not be used at this time"
+         fi
+      fi
+   fi
+   echo " "
+   echo "---------------------------------------------------------"
+   echo "Resuming pmon daemon in 5 seconds"
+   echo "location=  ${confdir}/bin/pmon"
+   echo "PID= " $prunt
+   echo "---------------------------------------------------------"
+   echo " "
+   echo "To stop resume of pmon daemon type <ctrl>-C"
+   sleep 5
+   kill -USR2 ${prunt}
+   if [ -f "${dname}.lockfile" ]
+   then
+      pnum=$(cat "${dname}.lockfile")
+      if [ "$pnum" == "" ]
+      then
+         echo "pmanage: ERROR"
+         echo "DB lockfile does not contain a PID"
+         exit 1
+      else
+         if (( $prunt == $pnum ))
+         then
+            true
+         else
+            rm -f "${dname}.lockfile"
+         fi
+      fi
+   fi
+   ;;
+   idle)
+   # Stop pmon from accessing database and monitoring jobs
+   if [ -f ${cdir}/run/pmon.pid ]
+   then
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      if (( ${#prunt} == 0 ))
+      then
+         echo "pmanage: ERROR"
+         echo "pmon is not running"
+         exit 1
+      fi
+   else
+      echo "pmanage: ERROR"
+      echo "pmon is not running"
+      exit 1
+   fi
+   if [ -f "${dname}.lockfile" ]
+   then
+      pnum=$(cat "${dname}.lockfile")
+      if [ "$pnum" == "" ]
+      then
+         echo "pmanage: ERROR"
+         echo "DB lockfile does not contain a PID"
+         exit 1
+      else
+         if (( $prunt == $pnum ))
+         then
+            true
+         else
+            echo " "
+            echo "Warning: The current lockfile was not created by pmon"
+            echo "Warning: pinfo should not be used at this time"
+         fi
+      fi
+   fi
+   echo " "
+   echo "---------------------------------------------------------"
+   echo "Idling pmon daemon in 5 seconds"
+   echo "location=  ${confdir}/bin/pmon"
+   echo "PID= " $prunt
+   echo "---------------------------------------------------------"
+   echo " "
+   echo "To continue at current operating status type <ctrl>-C"
+   sleep 5
+   echo "0" > "${dname}.lockfile" 
+   ;;
+   *)
+   echo "Usage: pmanage {start|stop|reload|pause|resume|idle}"
+   echo "See http://lservices.ciser.cornell.edu/mediawiki/index.php/KevPMON for more info"
+   exit 1
+   ;;
+esac
