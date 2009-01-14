@@ -1,6 +1,6 @@
 #!/bin/bash
 # Pmon database query tool
-# Version 0.1
+# Version 0.3
 
 #*********************************************************
 # Process Command Line Arguments
@@ -252,9 +252,11 @@ then
   printf "%s %d \t %8.8g\n" "   pre_run     :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='pre' AND pre_stat='run';")  $pru
   printf "%s %d \t %8.8g\n" "   pre_fail    :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='pre' AND pre_stat='fail';")  $pfa
   printf "%s %d \t %8.8g\n" "   pre_finish  :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='pre' AND pre_stat='finish';")  $pfi
+  printf "%s %d \t %8.8g\n" "   main_nostart:" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='main' AND main_stat='nostart';") "0" 
   printf "%s %d \t %8.8g\n" "   main_run    :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='main' AND main_stat='run';")  $mru
   printf "%s %d \t %8.8g\n" "   main_fail   :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='main' AND main_stat='fail';")  $mfa
   printf "%s %d \t %8.8g\n" "   main_finish :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='main' AND main_stat='finish';")  $mfi
+  printf "%s %d \t %8.8g\n" "   post_nostart:" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='post' AND post_stat='nostart';") "0"
   printf "%s %d \t %8.8g\n" "   post_run    :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='post' AND post_stat='run';")  $tru
   printf "%s %d \t %8.8g\n" "   post_fail   :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='post' AND post_stat='fail';")  $tfa
   printf "%s %d \t %8.8g\n" "   post_finish :" $(sqlite3 $fname "SELECT COUNT(*) from jobs WHERE status='post' AND post_stat='finish';")  $tfi

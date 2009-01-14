@@ -1,6 +1,6 @@
 #!/bin/bash
 # Management program for pmon daemon
-# Version 0.1
+# Version 0.3
 
 #*********************************************************
 # Find location of bin and confdir directories
@@ -28,6 +28,28 @@ else
 fi
 
 #*********************************************************
+# Check for existence of lock file
+#*********************************************************
+if [ -f "${dname}.lockfile" ]
+then
+   pnum=$(cat "${dname}.lockfile")
+   if [ "${pnum}" == "" ]
+   then
+      echo "ERROR: lockfile has no PID"
+      exit 1
+   else
+      if (( $pnum > 0 ))
+      then
+         until [ ! -f ${dname}.lockfile ]
+         do
+            echo "DB Lock File Exists: " $(date -u)
+            sleep 5
+         done 
+      fi
+   fi
+fi
+
+#*********************************************************
 #Process one allowed argument
 #*********************************************************
 case "$1" in
@@ -45,16 +67,28 @@ case "$1" in
       ${confdir}/bin/pmon ${confdir}/library/config/pmon.conf
       sleep 1
       prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
-      echo " "
-      echo "Pmon has PID= " $prunt
-      echo " "
+      if (( ${#prunt} > 0 ))
+      then
+         echo " "
+         echo "Pmon has PID= " $prunt
+         echo " "
+      else
+         echo " "
+         echo "Pmon failed to launch"
+         echo " "
+      fi 
    else
       ${confdir}/bin/pmon ${confdir}/library/config/pmon.conf
-      sleep 1
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
-      echo " "
-      echo "Pmon has PID= " $prunt
-      echo " "
+      if (( ${?} > 0 ))
+      then
+         exit 1
+      else
+         sleep 1
+         prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+         echo " "
+         echo "Pmon has PID= " $prunt
+         echo " "
+      fi
    fi
    ;;
    stop)
@@ -185,6 +219,9 @@ case "$1" in
          if (( $prunt == $pnum ))
          then
             true
+         elif (( 0 == $pnum ))
+         then
+            true
          else
             echo " "
             echo "Warning: The current lockfile was not created by pmon"
@@ -248,6 +285,12 @@ case "$1" in
          if (( $prunt == $pnum ))
          then
             true
+         elif (( 0 == $pnum ))
+         then
+            echo " "
+            echo "pmanage: ERROR"
+            echo "pmon is already idled"
+            exit 1
          else
             echo " "
             echo "Warning: The current lockfile was not created by pmon"
@@ -266,8 +309,58 @@ case "$1" in
    sleep 5
    echo "0" > "${dname}.lockfile" 
    ;;
+   status)
+   if [ -f ${cdir}/run/pmon.pid ]
+   then
+      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      if (( ${#prunt} > 0 ))
+      then
+         state=active
+         if [ -f ${dname}.lockfile ]
+         then
+            pnum=$(cat "${dname}.lockfile")
+            if [ "$pnum" == "" ]
+            then
+               echo "pmanage: ERROR"
+               echo "DB lockfile does not contain a PID"
+               exit 1
+            else
+               if (( $prunt == $pnum ))
+               then
+                  true
+               elif (( 0 == $pnum ))
+               then
+                  state=idled
+               fi
+            fi
+         fi
+      else
+         state=inactive
+      fi
+   else
+      state=inactive
+   fi
+
+   echo " "
+   echo "-----------------------------------------------------------------------------"
+   echo "pmanage: Status Report"
+   echo "date :" $(date -u)
+   echo "-----------------------------------------------------------------------------"
+   echo "Pmanage can determine the following run states: inactive, active, or idled"
+   echo "Pmon currently is: " $state
+   echo "Pmon PID is      : " $prunt
+   echo "-----------------------------------------------------------------------------"
+   echo "Pause and Resume History (if any)"
+   if [ -f ${cdir}/run/log/pmon.log ]
+   then
+      grep "Job Launching Paused" ${cdir}/run/log/pmon.log
+      grep "Job Launching Resumed" ${cdir}/run/log/pmon.log
+   fi
+   echo "-----------------------------------------------------------------------------"
+   echo " "
+   ;;
    *)
-   echo "Usage: pmanage {start|stop|reload|pause|resume|idle}"
+   echo "Usage: pmanage {start|stop|reload|pause|resume|idle|status}"
    echo "See http://lservices.ciser.cornell.edu/mediawiki/index.php/KevPMON for more info"
    exit 1
    ;;
