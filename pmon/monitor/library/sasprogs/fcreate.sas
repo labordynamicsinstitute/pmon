@@ -2,6 +2,8 @@
 
 options ls=256 mprint mlogic symbolgen;
 
+%put JOBID= &sysjobid;
+
 %let obs=500000;
 
 %let dlabel=%sysget(dlabel);

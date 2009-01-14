@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pmon Version 0.2
+# Pmon Version 0.3
 # Process Monitor Daemon
 #*********************************************************
 # Overview
@@ -83,7 +83,7 @@ then
       fi
    else
       echo "pmon: ERROR"
-      echo "Error in pmon.conf: dbname does not exist"
+      echo "Error in pmon.conf: dbname does not exist or space in full path to file"
       exit 1
    fi
    if [ -d $jobdir ]
@@ -95,7 +95,7 @@ then
       exit 1
    fi
    # Check Database for a clean exit
-   rkeys=( $(sqlite3 ${cdir}/run/db/${dbname} "SELECT rkey FROM jobs WHERE tstart='yes' AND tfinish='no'") )
+   rkeys=( $(sqlite3 ${cdir}/run/db/${dbname} "begin; SELECT rkey FROM jobs WHERE tstart='yes' AND tfinish='no'; commit;") )
    if (( ${#rkeys[@]} > 0 ))
    then
       echo "pmon: ERROR"
@@ -103,7 +103,7 @@ then
       exit 1
    fi
    unset rkeys
-   rkeys=( $(sqlite3 ${cdir}/run/db/${dbname} "SELECT rkey FROM jobs WHERE tstart='no' AND tfinish='yes'") )
+   rkeys=( $(sqlite3 ${cdir}/run/db/${dbname} "begin; SELECT rkey FROM jobs WHERE tstart='no' AND tfinish='yes'; commit;") )
    if (( ${#rkeys[@]} > 0 ))
    then
       echo "pmon: ERROR"
@@ -159,6 +159,9 @@ plim=${plimit}
 nval=${nadj}
 dname=${cdir}/run/db/${dbname}
 
+# Turn Debugging On(1) or Off(0)
+debug=0
+
 # Set default value of pause
 pause=no
 
@@ -167,6 +170,15 @@ umask $pmask
 
 # Don't want to prevent umount
 cd /
+
+# Create a dummy pid file for nostart phase
+echo "0" > ${cdir}/run/pid/pid_0000_0000
+
+# Create a status file
+if [ ! -f ${cdir}/run/pmon.status ]
+then
+   echo "0" > ${cdir}/run/pmon.status
+fi
 
 # Write basic pmon info to the log
 echo " "
@@ -187,11 +199,15 @@ echo " "
 function fstop {
   echo "fstop function called"
   unset rkeys
-  rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0") )
+  let kline=${LINENO}+1
+  rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0; commit;") )
   for i in "${rkeys[@]}"; do
-     pid=$(sqlite3 ${dname} "SELECT pid FROM jobs WHERE rkey = ${i}")
-     pid_file=$(sqlite3 ${dname} "SELECT pid_file FROM jobs WHERE rkey=${i}")
-     status=$(sqlite3 ${dname} "SELECT status FROM jobs WHERE rkey=${i}")
+     let kline=${LINENO}+1
+     pid=$(dbdown ${kline} ${dname} "begin; SELECT pid FROM jobs WHERE rkey = ${i}; commit;")
+     let kline=${LINENO}+1
+     pid_file=$(dbdown ${kline} ${dname} "begin; SELECT pid_file FROM jobs WHERE rkey=${i}; commit;")
+     let kline=${LINENO}+1
+     status=$(dbdown ${kline} ${dname} "begin; SELECT status FROM jobs WHERE rkey=${i}; commit;")
      unset apid
      apid=( $(ps -o pid --ppid ${pid} | grep -v PID | tr '[0-9]' '[0-9]') )
      kill ${pid}
@@ -203,8 +219,21 @@ function fstop {
            echo "fstop: PPID= ${pid} PID= ${j} killed"
         done
      fi
-     rc_status=$(cat ${cdir}/run/pid/${pid_file})
-     sqlite3 ${dname} "update jobs set ${status}_stat='fail', ${status}_exit_status=${rc_status} where rkey=${i}"
+     if [ -f ${cdir}/run/pid/${pid_file} ]
+     then
+        let kline=${LINENO}+1
+        rc_status=$(kcat ${kline} ${cdir}/run/pid/${pid_file})
+        if (( ${#rc_status} > 0 ))
+        then
+           true
+        else
+           rc_status=99
+        fi
+     else
+        rc_status=99
+     fi
+     let kline=${LINENO}+1
+     dbup ${kline} ${dname} "begin immediate; update jobs set ${status}_stat='fail', ${status}_exit_status=${rc_status} where rkey=${i}; commit;"
   done
   if [ -f "${dname}.lockfile" ] 
   then
@@ -253,14 +282,35 @@ function fpause {
 function fresume {
   echo "fresume function called"
   pause=no
-  echo "Job launching Resumed: " $(date -u)  
+  echo "Job Launching Resumed: " $(date -u)  
 }
 
 function errtrap {
    es=$?
-   cmd=$(sed -n -e "${1},${1} p" ${cdir}/bin/$0)
+   cmd=$(sed -n -e "${1},${1} p" $0)
    echo "ERROR line $1: $cmd"
    echo "ERROR line $1: Command exited with status $es"
+   if (( ${debug} == 1 ))
+   then
+      echo "ERROR Common Values"
+      echo "ERROR     rkeys=" ${rkeys[@]}
+      echo "ERROR         i=" $i
+      echo "ERROR    dlabel=" $dlabel
+      echo "ERROR     njobs=" $njobs
+      echo "ERROR       pid=" $pid
+      echo "ERROR  pid_file=" $pid_file
+      sqlite3 ${dname} "begin; select tstart from jobs where rkey=${i}; commit;" | awk ' { print "ERROR    tstart= " $0 }'
+      sqlite3 ${dname} "begin; select tfinish from jobs where rkey=${i}; commit;" | awk ' { print "ERROR    tfinish= " $0 }'
+      echo "ERROR Add Variable Values"
+      echo "ERROR      rcmd=" $rcmd
+      echo "ERROR     rargs=" $rargs
+      sqlite3 ${dname} "begin; select pre_stat, main_stat, post_stat, status from jobs where rkey=${i}; commit;" | awk ' { print "ERROR  stat= " $0 }'
+      echo "ERROR Remove Variable Values"
+      echo "ERROR    status=" $status
+      echo "ERROR rc_status=" $rc_status
+      echo "ERROR     njobs=" $njobs
+      echo "ERROR end line $1 output"
+   fi
 }
 
 #trap fstop INT QUIT TERM TSTP
@@ -268,39 +318,154 @@ trap fstop EXIT
 trap freload HUP
 trap fpause USR1
 trap fresume USR2 
-trap 'errtrap $LINENO' ERR
+trap 'errtrap ${LINENO}' ERR
 
 #*********************************************************
 #*** Functions Used in Main Daemon While Loop
 #*********************************************************
 
+# Arguments
+# 1 line number (+1)
+# 2 DB name
+# 3 SQL statements in double quotes
+function dbdown {
+   local rc ct val
+   rc=1
+   let ct=0
+   until (( $rc == 0 )); do
+      val=$(sqlite3 ${2} "pragma temp_store=2; pragma synchronous=0; ${3} begin; commit;")
+      rc=$?
+      if (( $rc > 0 ))
+      then
+         echo "WARNING line $1: sqlite3 ${3}" >&2
+         echo "WARNING line $1: Command exited with status $rc" >&2
+         sleep 1
+      fi
+      let ct=$ct+1
+      if (( $ct > 9 ))
+      then
+         echo "WARNING line $1: COMMAND FAILED" >&2
+         return 1
+      fi
+   done
+   echo $val
+}
+
+# Arguments
+# 1 line number (+1)
+# 2 DB name
+# 3 SQL statements in double quotes
+function dbup {
+   local rc ct
+   rc=1
+   let ct=0
+   until (( $rc == 0 )); do
+      #sleep 1
+      sqlite3 ${2} "pragma temp_store=2; pragma synchronous=0; ${3} begin; commit;"
+      rc=$?
+      #echo "rc=${rc} : sqlite3 ${2} ${3}"
+      if (( $rc > 0 ))
+      then
+         echo "WARNING line $1: sqlite3 ${3}" >&2
+         echo "WARNING line $1: Command exited with status $rc" >&2
+         sleep 1
+      fi
+      let ct=$ct+1
+      if (( $ct > 9 ))
+      then
+         echo "WARNING line $1: COMMAND FAILED" >&2
+         return 1
+      fi
+   done
+}
+
+# Arguments
+# 1 line number (+1)
+# 2 file name
+function kcat {
+   local rc ct
+   rc=1
+   let ct=0
+   until (( $rc == 0 )); do
+      cat ${2}
+      rc=$?
+      if (( $rc > 0 ))
+      then
+         echo "WARNING line $1: cat ${2}" >&2
+         echo "WARNING line $1: Command exited with status $rc" >&2
+         sleep 1
+      fi
+      let ct=$ct+1
+      if (( $ct > 9 ))
+      then
+         echo "WARNING line $1: COMMAND FAILED" >&2
+         return 1
+      fi
+   done
+}
+
+# Arguments
+# 1 run stage (pre main post nostart) 
 function padd {
+   unset tstart dlabel rcmd rargs pid pid_file cstat cpid cpidf ctst ctfi
    if [ "${1}" == "nostart" ]
    then
       sect="pre"
    else
       sect=$1
    fi
-   sqlite3 ${dname} "update jobs set tstart='yes' where rkey=${i}"
-   dlabel=$(sqlite3 ${dname} "SELECT dlabel FROM jobs WHERE rkey = ${i}")
-   rcmd=$(sqlite3 ${dname} "SELECT ${sect}_cmd FROM jobs WHERE rkey = ${i}")
-   rargs=$(sqlite3 ${dname} "SELECT ${sect}_args FROM jobs WHERE rkey = ${i}")
+   let kline=${LINENO}+1
+   dbup ${kline} ${dname} "begin immediate; update jobs set tstart='yes' where rkey=${i}; commit;"
+   let kline=${LINENO}+1
+   tstart=$(dbdown ${kline} ${dname} "begin; SELECT tstart FROM jobs WHERE rkey = ${i}; commit;")
+   let kline=${LINENO}+1
+   dlabel=$(dbdown ${kline} ${dname} "begin; SELECT dlabel FROM jobs WHERE rkey = ${i}; commit;")
+   let kline=${LINENO}+1
+   rcmd=$(dbdown ${kline} ${dname} "begin; SELECT ${sect}_cmd FROM jobs WHERE rkey = ${i}; commit;")
+   let kline=${LINENO}+1
+   rargs=$(dbdown ${kline} ${dname} "begin; SELECT ${sect}_args FROM jobs WHERE rkey = ${i}; commit;")
    if [ "${1}" == "nostart" ]
    then 
       mkdir -p ${jdir}/${dlabel}
    fi
-   if (( ${#dlabel} > 0 )) && (( ${#rcmd} > 0 )) && (( ${#rargs} ))
+   if (( ${#sect} > 0 )) && [ "${tstart}" == "yes" ] && (( ${#dlabel} > 0 )) && (( ${#rcmd} > 0 )) && (( ${#rargs} ))
    then
       nice  -n $nval ${cdir}/library/scripts/${rcmd} ${jdir} ${dlabel} ${cdir} ${rargs} < /dev/null >> ${jdir}/${dlabel}/${sect}.log 2>> ${jdir}/${dlabel}/${sect}.log &
       if (( ${?} == 0 ))
       then 
          pid=$!
          pid_file=pid_${sect}_${pid}
-         sqlite3 ${dname} "update jobs set ${sect}_stat='run', pid=$pid, pid_file='${pid_file}' where rkey=${i}"
-         sqlite3 ${dname} "update jobs set tfinish='yes' where rkey=${i}"
-         echo  "Job Launch Successful: rkey= " ${i} "sect= " ${1} "pid= " ${pid}
+         if (( ${#pid} > 0 )) && (( ${#pid_file} > 0 ))
+         then
+            let kline=${LINENO}+1
+            dbup ${kline} ${dname} "begin immediate; update jobs set ${sect}_stat='run', pid=$pid, pid_file='${pid_file}', tfinish='yes' where rkey=${i}; commit;"
+            # Check to verify update (this one is crucial so assume it failed)
+            update=bad
+            while [ "${update}" == "bad" ]; do
+               let kline=${LINENO}+1
+               cstat=$(dbdown ${kline} ${dname} "begin; SELECT ${sect}_stat FROM jobs WHERE rkey = ${i}; commit;")
+               let kline=${LINENO}+1
+               cpid=$(dbdown ${kline} ${dname} "begin; SELECT pid FROM jobs WHERE rkey = ${i}; commit;")
+               let kline=${LINENO}+1
+               cpidf=$(dbdown ${kline} ${dname} "begin; SELECT pid_file FROM jobs WHERE rkey = ${i}; commit;")
+               let kline=${LINENO}+1
+               ctst=$(dbdown ${kline} ${dname} "begin; SELECT tstart FROM jobs WHERE rkey = ${i}; commit;")
+               let kline=${LINENO}+1
+               ctfi=$(dbdown ${kline} ${dname} "begin; SELECT tfinish FROM jobs WHERE rkey = ${i}; commit;")
+               if [ "${cstat}" == "run" ] && [ "${cpid}" == "${pid}" ] && [ "${cpidf}" == "${pid_file}" ] && [ "${ctst}" == "yes" ] && [ "${ctfi}" == "yes" ]
+               then
+                  update=good
+               else
+                  let kline=${LINENO}+1
+                  dbup ${kline} ${dname} "begin immediate; update jobs set ${sect}_stat='run', pid=$pid, pid_file='${pid_file}', tfinish='yes' where rkey=${i}; commit;"
+                  echo "ERROR rkey= ${i}: ADD PROCESS UPDATE FAILURE"
+                  sleep 1
+               fi
+            done
+            echo  "Job Launch Successful:" ${i} "dlabel=" ${dlabel} "sect=" ${1} "pid=" ${pid}
+         fi
       else
-         echo "Job Launch Failed: rkey= " ${i} "sect= " ${1}
+         echo "Job Launch Failed:" ${i} "dlabel=" ${dlabel} "sect=" ${1}
       fi
    fi
 }
@@ -349,7 +514,8 @@ do
    cp -f ${dname} ${dname}.backup
 
    unset rkeys
-   rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0") )
+   let kline=${LINENO}+1
+   rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0; commit;") )
    njobs=${#rkeys[@]}
    echo "Entering Check for and Remove Process Loop: " $(date -u)
    echo "Processing the following rkeys: " ${rkeys[@]}
@@ -357,33 +523,73 @@ do
    ##### CHECK FOR AND THEN REMOVE FINISHED PROCESSES #####
 
    for i in "${rkeys[@]}"; do
-      pid=$(sqlite3 ${dname} "SELECT pid FROM jobs WHERE rkey = ${i}")
-      dlabel=$(sqlite3 ${dname} "SELECT dlabel FROM jobs WHERE rkey = ${i}")
-      pidrun=$(ps -p $pid -o pid | grep -v PID | tr '[0-9]' '[0-9]')
-      if [ "$pidrun" == "" ]
+      unset pid dlabel tstart pid_file status rc_status cstat cexit ctst ctfi
+      let kline=${LINENO}+1
+      pid=$(dbdown ${kline} ${dname} "begin; SELECT pid FROM jobs WHERE rkey = ${i}; commit;")
+      let kline=${LINENO}+1
+      dlabel=$(dbdown ${kline} ${dname} "begin; SELECT dlabel FROM jobs WHERE rkey = ${i}; commit;")
+      if (( ${#pid} > 0 )) && (( ${#dlabel} > 0 ))
       then
-         sqlite3 ${dname} "update jobs set tstart='yes' where rkey=${i}"
-         pid_file=$(sqlite3 ${dname} "SELECT pid_file FROM jobs WHERE rkey=${i}") 
-         status=$(sqlite3 ${dname} "SELECT status FROM jobs WHERE rkey=${i}")
-         if (( ${#pid_file} > 0 )) && (( ${#status} > 0 ))
+         if [ ! -d /proc/${pid} ]
          then
-            if [ -f ${cdir}/run/pid/${pid_file} ]
+            let kline=${LINENO}+1
+            dbup ${kline} ${dname} "begin immediate; update jobs set tstart='yes' where rkey=${i}; commit;"
+            let kline=${LINENO}+1
+            tstart=$(dbdown ${kline} ${dname} "begin; SELECT tstart FROM jobs WHERE rkey = ${i}; commit;")
+            let kline=${LINENO}+1
+            pid_file=$(dbdown ${kline} ${dname} "begin; SELECT pid_file FROM jobs WHERE rkey=${i}; commit;") 
+            let kline=${LINENO}+1
+            status=$(dbdown ${kline} ${dname} "begin; SELECT status FROM jobs WHERE rkey=${i}; commit;")
+            if [ "${tstart}" == "yes" ] && (( ${#pid_file} > 0 )) && (( ${#status} > 0 ))
             then
-               rc_status=$(cat ${cdir}/run/pid/${pid_file})
-               if (( $rc_status > 0 ))
-               then 
-                  echo  "Job Finished: " ${i} "dlabel= " $dlabel "pid= " $pid "status=fail " "rc_status= " $rc_status
-                  sqlite3 ${dname} "update jobs set ${status}_stat='fail', ${status}_exit_status=${rc_status} where rkey=${i}"
+               if [ -f ${cdir}/run/pid/${pid_file} ]
+               then
+                  let kline=${LINENO}+1
+                  rc_status=$(kcat ${kline} ${cdir}/run/pid/${pid_file})
+                  if (( ${#rc_status} > 0 ))
+                  then
+                     if (( $rc_status == 0 ))
+                     then
+                        statval=finish
+                        rcval=${rc_status}
+                     else
+                        statval=fail
+                        rcval=${rc_status}
+                     fi
+                  else
+                     statval=fail
+                     rcval=99
+                  fi
                else
-                  echo  "Job Finished: " ${i} "dlabel= " $dlabel "pid= " $pid "status=finish " "rc_status= " $rc_status
-                  sqlite3 ${dname} "update jobs set ${status}_stat='finish', ${status}_exit_status=${rc_status} where rkey=${i}"
+                  statval=fail
+                  rcval=99
                fi
-            else
-               echo  "Job Finished: dlabel= " $dlabel "pid= " $pid "status=fail99" "rc_status= " $rc_status
-               sqlite3 ${dname} "update jobs set ${status}_stat='fail', ${status}_exit_status=99 where rkey=${i}"
+               let kline=${LINENO}+1
+               dbup ${kline} ${dname} "begin immediate; update jobs set ${status}_stat='${statval}', ${status}_exit_status=${rcval}, tfinish='yes' where rkey=${i}; commit;"
+               # Check to verify update (this one is crucial so assume it failed)
+               update=bad
+               while [ "${update}" == "bad" ]; do
+                  let kline=${LINENO}+1
+                  cstat=$(dbdown ${kline} ${dname} "begin; SELECT ${status}_stat FROM jobs WHERE rkey = ${i}; commit;")
+                  let kline=${LINENO}+1
+                  cexit=$(dbdown ${kline} ${dname} "begin; SELECT ${status}_exit_status FROM jobs WHERE rkey = ${i}; commit;")
+                  let kline=${LINENO}+1
+                  ctst=$(dbdown ${kline} ${dname} "begin; SELECT tstart FROM jobs WHERE rkey = ${i}; commit;")
+                  let kline=${LINENO}+1
+                  ctfi=$(dbdown ${kline} ${dname} "begin; SELECT tfinish FROM jobs WHERE rkey = ${i}; commit;")
+                  if [ "${cstat}" == "${statval}" ] && [ "${cexit}" == "${rcval}" ] && [ "${ctst}" == "yes" ] && [ "${ctfi}" == "yes" ]
+                  then
+                     update=good
+                  else
+                     let kline=${LINENO}+1
+                     dbup ${kline} ${dname} "begin immediate; update jobs set ${status}_stat='${statval}', ${status}_exit_status=${rcval}, tfinish='yes' where rkey=${i}; commit;"
+                     echo "ERROR rkey= ${i}: REMOVE PROCESS UPDATE FAILURE"
+                     sleep 1
+                  fi
+               done
+               echo  "Job Finished:" ${i} "dlabel=" $dlabel "pid=" $pid "status=" ${statval} "rc_status=" $rc_status
+               njobs=${njobs}-1
             fi
-            sqlite3 ${dname} "update jobs set tfinish='yes' where rkey=${i}"
-            njobs=${njobs}-1
          fi
       fi
    done
@@ -397,7 +603,8 @@ do
       echo " "
       echo "Entering Add New Processes Loop: " $(date -u)
       unset rkeys
-      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('pre') AND pre_stat IN ('fail') LIMIT ${njobs}") )
+      let kline=${LINENO}+1
+      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre') AND pre_stat IN ('fail') LIMIT ${njobs}; commit;") )
       echo "Total processes to add: " ${njobs}
       echo "Processing pre rkeys: " ${rkeys[@]}
 
@@ -411,7 +618,8 @@ do
 
       njobs=$njobs-${#rkeys[@]} 
       unset rkeys
-      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('main') AND main_stat IN ('nostart', 'fail') LIMIT ${njobs}") )
+      let kline=${LINENO}+1
+      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('main') AND main_stat IN ('nostart', 'fail') LIMIT ${njobs}; commit;") )
       echo "Total processes to add: " ${njobs}
       echo "Processing main rkeys: " ${rkeys[@]}
 
@@ -425,7 +633,8 @@ do
 
       njobs=$njobs-${#rkeys[@]}
       unset rkeys
-      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('post') AND post_stat IN ('nostart', 'fail') LIMIT ${njobs}") )
+      let kline=${LINENO}+1
+      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('post') AND post_stat IN ('nostart', 'fail') LIMIT ${njobs}; commit;") )
       echo "Total processes to add: " ${njobs}
       echo "Processing post rkeys: " ${rkeys[@]}
 
@@ -439,10 +648,10 @@ do
 
       njobs=$njobs-${#rkeys[@]}
       unset rkeys
-      rkeys=( $(sqlite3 ${dname} "SELECT rkey FROM jobs WHERE status IN ('nostart') AND pre_stat IN ('nostart') LIMIT ${njobs}") )
+      let kline=${LINENO}+1
+      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('nostart') AND pre_stat IN ('nostart') LIMIT ${njobs}; commit;") )
       echo "Total processes to add: " ${njobs}
       echo "Processing nostart rkeys: " ${rkeys[@]}
-
       if (( $njobs > 0 ))
       then
           ### Set NOSTART jobs to run status
@@ -451,6 +660,45 @@ do
          done
       fi
    fi
+   # Write out status of daemon
+   let kline=${LINENO}+1
+   total=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs; commit;") )
+   let kline=${LINENO}+1
+   totfa=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('finish', 'fail'); commit;") )
+   let kline=${LINENO}+1
+   totfi=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('finish'); commit;") )
+   echo " "
+   echo "Run Group Overview: " $(date -u)
+   echo "Total Jobs              : " ${#total[@]}
+   echo "Failed and Finished Jobs: " ${#totfa[@]} 
+   echo "Finished Jobs           : " ${#totfi[@]} 
+   if (( ${#total[@]} == ${#totfi[@]} ))
+   then
+      echo "2" > ${cdir}/run/pmon.status
+   elif (( ${#total[@]} == ${#totfa[@]} ))
+   then
+      echo "1" > ${cdir}/run/pmon.status
+   fi
+   # Check for unfinished transactions
+   unset rkeys
+   let kline=${LINENO}+1
+   rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE tstart='yes' AND tfinish='no'; commit;") )
+   if (( ${#rkeys[@]} > 0 ))
+   then
+      echo " "
+      echo "INCONSISTENCY: tstart=yes and tfinish=no"
+      echo "INCONSISTENCY: rkeys= " ${rkeys[@]}
+   fi
+   unset rkeys
+   let kline=${LINENO}+1
+   rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE tstart='no' AND tfinish='yes'; commit;") )
+   if (( ${#rkeys[@]} > 0 ))
+   then
+      echo " "
+      echo "INCONSISTENCY: tstart=no and tfinish=yes"
+      echo "INCONSISTENCY: rkeys= " ${rkeys[@]}
+   fi
+   # Remove the lock file
    if [ -f "${dname}.lockfile" ]
    then
       pnum=$(cat "${dname}.lockfile")
