@@ -50,7 +50,8 @@ fi
 function default_config
 {
 # where is pmon configured
-[[ -z $PMON_CONF ]] && PMON_CONF=$(dirname $0)/../library/config/pmon.conf
+[[ -z $PMON_CONF_LOC ]] && PMON_CONF_LOC=$(dirname $0)/../library/config
+[[ -z $PMON_CONF ]] && PMON_CONF=$PMON_CONF_LOC/pmon.conf
 . $PMON_CONF
 # where is the DB - could be overridden?
 [[ -z $DB_LOC ]] && DB_LOC=$(dirname $0)/../run/db
@@ -58,10 +59,10 @@ function default_config
 #[[ -z $dbname ]] && dbname=rlist.db
 [[ -f $DB_LOC/$dbname ]] && exists_db="[WARNING: exists!]" || exists_db=
 # the file defining the DB structure
-[[ -z $createfile ]] && createfile=$DB_LOC/create_rlist_db
+[[ -z $createfile ]] && createfile=$PMON_CONF_LOC/create_rlist_db.sqlite
 [[ -f $createfile ]] && exists_createfile="[OK]" || exists_createfile="[WARNING: not there]"
 # the file to load into the DB
-[[ -z $loadfile ]] && loadfile=$DB_LOC/load_jobs.sql
+[[ -z $loadfile ]] && loadfile=$PMON_CONF_LOC/load_jobs.sql
 [[ -f $loadfile ]] && exists_loadfile="[OK]" || exists_loadfile="[WARNING: not there]"
 }
 
