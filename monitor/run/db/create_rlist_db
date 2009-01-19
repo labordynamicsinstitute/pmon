@@ -1,4 +1,6 @@
 -- *****************************************************
+-- $Id$
+-- $URL$
 -- SQLite Code to create a template for pmon daemon db
 -- Overview:
 -- Create jobs table (dlabel is crucial variable)
@@ -310,3 +312,8 @@ BEGIN
        old.post_start, old.post_stop, old.post_exit_status, old.status,
        old.pid_file, old.pid, old.tstart, old.tfinish, "DELETE", DATETIME("NOW"));
 END;
+-- *****************************************************
+--  Setting Page Cache to a Larger Value
+-- *****************************************************
+pragma default_cache_size=25000;
+

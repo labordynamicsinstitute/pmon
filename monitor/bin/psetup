@@ -1,0 +1,152 @@
+#!/bin/bash
+# Pmon database setup tool
+# $Id$
+# $URL$
+#*********************************************************
+# Process Command Line Arguments
+#*********************************************************
+
+#*********************************************************
+# Determine whether the option was called
+#*********************************************************
+for i in "$@"; do
+   case "$i" in
+      -y) force=yes ;;
+   esac
+done
+
+if (( ${#@} == 0 ))
+then
+   help=yes
+fi
+
+usage="Usage: psetup [-h] [-f {dbfile}] [-l {loadfile}] [-y for force overwrite] 
+        [-d for all defaults]"
+
+#*********************************************************
+# Parse Options
+#*********************************************************
+while getopts ":hdyf:l:" opt; do
+   case "$opt" in
+      h ) help=yes ;;
+      d ) defaults=yes ;;
+      f ) fname=$OPTARG ;;
+      l ) loadfile=$OPTARG ;;
+      y ) force=yes ;;
+      \?|*) echo $usage
+          exit 1 ;;
+   esac
+done
+
+if [ "$help" == "yes" ]
+then
+   echo "$0: help option called, program exiting"
+   echo $usage
+   echo "See http://lservices.vrdc.cornell.edu/mediawiki/index.php/KevPMON for more info"
+   exit 0
+fi
+
+#-------------------- configuration --------------------
+function default_config
+{
+# where is pmon configured
+[[ -z $PMON_CONF ]] && PMON_CONF=$(dirname $0)/../library/config/pmon.conf
+. $PMON_CONF
+# where is the DB - could be overridden?
+[[ -z $DB_LOC ]] && DB_LOC=$(dirname $0)/../run/db
+# this should be parsed from the config file
+#[[ -z $dbname ]] && dbname=rlist.db
+[[ -f $DB_LOC/$dbname ]] && exists_db="[WARNING: exists!]" || exists_db=
+# the file defining the DB structure
+[[ -z $createfile ]] && createfile=$DB_LOC/create_rlist_db
+[[ -f $createfile ]] && exists_createfile="[OK]" || exists_createfile="[WARNING: not there]"
+# the file to load into the DB
+[[ -z $loadfile ]] && loadfile=$DB_LOC/load_jobs.sql
+[[ -f $loadfile ]] && exists_loadfile="[OK]" || exists_loadfile="[WARNING: not there]"
+}
+
+
+
+#-------------------- print info --------------------
+function print_info
+{
+cat <<EOF
+
+  $0 - setting up the database for PMON
+
+  PMON configuration   : $PMON_CONF
+  
+  Location of database : $DB_LOC/$dbname $exists_db
+  Location of load file: $loadfile $exists_loadfile
+
+EOF
+
+if [[ ! $force = yes ]] 
+then
+    echo "If this is correct, press ENTER to continue, CTRL-C to abort"
+    read
+fi
+
+
+}
+
+#*********************************************************
+#Trap Errors
+#*********************************************************
+
+function errtrap {
+   es=$?
+   cmd=$(sed -n -e "${1},${1} p" ${cdir}/bin/$0)
+   echo "ERROR line $1: $cmd"
+   echo "ERROR line $1: Command exited with status $es"
+}
+trap 'errtrap $LINENO' ERR
+
+
+#-------------------- create db --------------------
+function create_db
+{
+if [[ ! -z $exists_db ]]
+then
+   echo "Warning: the DB $DB_LOC/$dbname will be overwritten."
+   if [[ ! $force = yes ]] 
+   then
+     echo "If this is OK, press ENTER to continue, CTRL-C to abort"
+     read
+     rm -i $DB_LOC/$dbname
+   fi
+fi
+sqlite3  $DB_LOC/$dbname < $createfile
+}
+
+#-------------------- load db --------------------
+function load_db
+{
+sqlite3  $DB_LOC/$dbname < $loadfile
+}
+
+#-------------------- check db --------------------
+function check_db
+{
+numinserts=$(grep "INSERT into jobs" $loadfile| wc -l)
+numjobs=$(sqlite3 $DB_LOC/$dbname "select count(*) from jobs")
+[[ $numinserts = $numjobs ]] && load_success=OK || load_success=ERROR
+echo "------------------------------------------------------------"
+echo "  Loadfile has $numinserts inserts into jobs table."
+echo "  Database has $numjobs entries in jobs table."
+echo "  Load status: $load_success"
+echo "------------------------------------------------------------"
+
+
+}
+
+#-------------------- now run it all --------------------
+
+
+default_config
+print_info
+create_db
+load_db
+check_db
+
+
