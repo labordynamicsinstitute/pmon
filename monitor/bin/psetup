@@ -27,7 +27,7 @@ cat <<EOF
                [-f {dbfile}] 
                [-l {loadfile}] 
                [-y for force overwrite] 
-	       [-s {servername}]
+	       [-n {nodename}]
                [-d for all defaults]
 
 EOF
@@ -41,7 +41,7 @@ while getopts ":hdyf:l:s:" opt; do
       d ) defaults=yes ;;
       f ) fname=$OPTARG ;;
       l ) loadfile=$OPTARG ;;
-      s ) myhost=$OPTARG ;;
+      n ) myhost=$OPTARG ;;
       y ) force=yes ;;
       \?|*) usage
           exit 1 ;;
@@ -61,10 +61,13 @@ function default_config
 {
 # where is pmon configured
 [[ -z $myhost ]] && myhost=$(hostname)
-[[ -z $PMON_CONF_LOC ]] && PMON_CONF_LOC=$(dirname $0)/../library/config
-[[ -z $PMON_RUN_LOC ]] && PMON_RUN_LOC=$(dirname $0)/../run/$myhost
+confdir=$(dirname $(pwd $(dirname $0)))
+[[ -z $PMON_CONF_LOC ]] && PMON_CONF_LOC=${confdir}/library/config
+[[ -z $PMON_RUN_LOC ]] && PMON_RUN_LOC=${confdir}/run/$myhost
 [[ -z $PMON_CONF ]] && PMON_CONF=$PMON_CONF_LOC/pmon.${myhost}.conf
 [[ -f $PMON_CONF ]] || PMON_CONF=$PMON_CONF_LOC/pmon.conf
+# if this still does not exist, then lets do something about it
+[[ -f $PMON_CONF ]] || create_pmon_conf
 . $PMON_CONF
 # where is the DB - could be overridden?
 [[ -z $DB_LOC ]] && DB_LOC=$(dirname $0)/../run/db
@@ -79,7 +82,22 @@ function default_config
 [[ -f $loadfile ]] && exists_loadfile="[OK]" || exists_loadfile="[WARNING: not there]"
 }
 
+#-------------------- create pmon conf --------------------
+function create_pmon_conf
+{
+# when we are here, we should have been called from default_config
+# with a missing pmon.conf
 
+PMON_CONF_TEMPLATE=$PMON_CONF_LOC/pmon.conf.template
+jdir=${confdir}/
+cp $PMON_CONF_TEMPLATE    $PMON_CONF
+echo " pmon.conf created at $PMON_CONF"
+echo " Customized to your needs."
+echo " Then re-run this setup program again."
+echo "Exiting."
+exit 0
+
+}
 
 #-------------------- print info --------------------
 function print_info
@@ -160,6 +178,25 @@ fi
 
 }
 
+#--------------------create jobdir --------------------
+function create_jobdir
+{
+if [[ ! -d $jobdir ]]
+then
+  echo "  Creating jobdir $jobdir"
+  mkdir -p  $jobdir
+fi
+if [[ ! -d $jobdir ]]
+then
+    echo "Problem creating jobdir directory"
+    echo "Exiting"
+    exit 2
+else
+    echo "Success."
+fi
+
+}
+
 #-------------------- load db --------------------
 function load_db
 {
@@ -172,7 +209,7 @@ function check_db
 numinserts=$(grep "INSERT into jobs" $loadfile| wc -l)
 numjobs=$(sqlite3 $DB_LOC/$dbname "SELECT COUNT(*) FROM JOBS")
 [[ $numinserts = $numjobs ]] && load_success=OK || load_success=ERROR
-queried_conf=$(sqlite3 $DB_LOC/$dbname "SELECT server_conf FROM serveraction WHERE server='$myhost';")
+queried_conf=$(sqlite3 $DB_LOC/$dbname "SELECT node_conf FROM nodeaction WHERE node='$myhost';")
 
 echo "------------------------------------------------------------"
 echo "  Loadfile has $numinserts inserts into jobs table."
@@ -189,19 +226,19 @@ else
 fi
 if [[ -z $queried_conf ]]
 then
-echo "  Server $myhost not found in table SERVERACTION: PROBLEM"
+echo "  Node $myhost not found in table NODEACTION: PROBLEM"
 else
-echo "  Server $myhost is using $queried_conf"
+echo "  Node $myhost is using $queried_conf"
 fi
 echo "------------------------------------------------------------"
 
 
 }
 
-#-------------------- insert server into db --------------------
-function insert_server
+#-------------------- insert node into db --------------------
+function insert_node
 {
-sqlite3 $DB_LOC/$dbname "begin; INSERT into serveraction (server, server_conf) VALUES ('$myhost','$PMON_CONF'); commit;"
+sqlite3 $DB_LOC/$dbname "begin; INSERT into nodeaction (node, node_conf) VALUES ('$myhost','$PMON_CONF'); commit;"
 }
 
 #-------------------- now run it all --------------------
@@ -210,9 +247,10 @@ sqlite3 $DB_LOC/$dbname "begin; INSERT into serveraction (server, server_conf) V
 default_config
 print_info
 create_runloc
+create_jobdir
 create_db
 load_db
-insert_server
+insert_node
 check_db
 
 

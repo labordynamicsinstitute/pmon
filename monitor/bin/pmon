@@ -87,7 +87,7 @@ then
    if [ -f ${cdir}/run/db/${dbname} ]
    then
       tbl=( $(sqlite3 ${cdir}/run/db/${dbname} .tables) )
-      if [ "${tbl[0]}" = "jobs" ] && [ "${tbl[1]}" = "jobslog" ] && [ "${tbl[2]}" = "serveraction" ]
+      if [ "${tbl[0]}" = "jobs" ] && [ "${tbl[1]}" = "jobslog" ] && [ "${tbl[2]}" = "nodeaction" ]
       then
          true
       else
@@ -227,7 +227,7 @@ function fstop {
   echo "fstop function called"
   unset rkeys
   let kline=${LINENO}+1
-  rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0 and server = '$myhost'; commit;") )
+  rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0 and node = '$myhost'; commit;") )
   for i in "${rkeys[@]}"; do
      let kline=${LINENO}+1
      pid=$(dbdown ${kline} ${dname} "begin; SELECT pid FROM jobs WHERE rkey = ${i}; commit;")
@@ -467,7 +467,7 @@ function padd {
          if (( ${#pid} > 0 )) && (( ${#pid_file} > 0 ))
          then
             let kline=${LINENO}+1
-            dbup ${kline} ${dname} "begin immediate; update jobs set ${sect}_stat='run', server='$myhost', pid=$pid, pid_file='${pid_file}', tfinish='yes' where rkey=${i}; commit;"
+            dbup ${kline} ${dname} "begin immediate; update jobs set ${sect}_stat='run', node='$myhost', pid=$pid, pid_file='${pid_file}', tfinish='yes' where rkey=${i}; commit;"
             # Check to verify update (this one is crucial so assume it failed)
             update=bad
             while [ "${update}" == "bad" ]; do
@@ -486,12 +486,12 @@ function padd {
                   update=good
                else
                   let kline=${LINENO}+1
-                  dbup ${kline} ${dname} "begin immediate; update jobs set ${sect}_stat='run', server='$myhost', pid=$pid, pid_file='${pid_file}', tfinish='yes' where rkey=${i}; commit;"
+                  dbup ${kline} ${dname} "begin immediate; update jobs set ${sect}_stat='run', node='$myhost', pid=$pid, pid_file='${pid_file}', tfinish='yes' where rkey=${i}; commit;"
                   echo "ERROR rkey= ${i}: ADD PROCESS UPDATE FAILURE"
                   sleep 1
                fi
             done
-            echo  "Job Launch Successful:" ${i} "dlabel=" ${dlabel} "sect=" ${1} "pid=" ${pid} "server=" ${myhost}
+            echo  "Job Launch Successful:" ${i} "dlabel=" ${dlabel} "sect=" ${1} "pid=" ${pid} "node=" ${myhost}
          fi
       else
          echo "Job Launch Failed:" ${i} "dlabel=" ${dlabel} "sect=" ${1}
@@ -552,16 +552,16 @@ do
 
    # now we start modifying
    
-   # update server database with status
+   # update node database with status
    unset srv_status
    let kline=${LINENO}+1   
-   srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE serveraction SET status='running', status_time=DATETIME("now") WHERE  server = '$myhost'; commit;") )
-   echo "Set server status."
+   srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='running', status_time=DATETIME("now") WHERE  node = '$myhost'; commit;") )
+   echo "Set node status."
 
    # Check and remove process loop
    unset rkeys
    let kline=${LINENO}+1
-   rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0 and server = '$myhost'; commit;") )
+   rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre', 'main', 'post') AND pid>0 and node = '$myhost'; commit;") )
    njobs=${#rkeys[@]}
    echo "Entering Check for and Remove Process Loop: " $(date -u)
    echo "Processing the following rkeys: " ${rkeys[@]}
@@ -650,7 +650,7 @@ do
       echo "Entering Add New Processes Loop: " $(date -u)
       unset rkeys
       let kline=${LINENO}+1
-      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre') AND pre_stat IN ('fail')  AND server = '$myhost'  LIMIT ${njobs}; commit;") )
+      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre') AND pre_stat IN ('fail')  AND node = '$myhost'  LIMIT ${njobs}; commit;") )
       echo "Total processes to add: " ${njobs}
       echo "Processing pre rkeys: " ${rkeys[@]}
 
@@ -665,7 +665,7 @@ do
       njobs=$njobs-${#rkeys[@]} 
       unset rkeys
       let kline=${LINENO}+1
-      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('main') AND main_stat IN ('nostart', 'fail') AND server = '$myhost' LIMIT ${njobs}; commit;") )
+      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('main') AND main_stat IN ('nostart', 'fail') AND node = '$myhost' LIMIT ${njobs}; commit;") )
       echo "Total processes to add: " ${njobs}
       echo "Processing main rkeys: " ${rkeys[@]}
 
@@ -680,7 +680,7 @@ do
       njobs=$njobs-${#rkeys[@]}
       unset rkeys
       let kline=${LINENO}+1
-      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('post') AND post_stat IN ('nostart', 'fail') AND server = '$myhost' LIMIT ${njobs}; commit;") )
+      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('post') AND post_stat IN ('nostart', 'fail') AND node = '$myhost' LIMIT ${njobs}; commit;") )
       echo "Total processes to add: " ${njobs}
       echo "Processing post rkeys: " ${rkeys[@]}
 
@@ -693,7 +693,7 @@ do
       fi
 
       # getting new jobs: this is the only one where we do NOT
-      # condition on server name
+      # condition on node name
       njobs=$njobs-${#rkeys[@]}
       unset rkeys
       let kline=${LINENO}+1
@@ -708,7 +708,7 @@ do
          done
       fi
    fi
-   # Write out status of daemon/database across all servers
+   # Write out status of daemon/database across all nodes
    let kline=${LINENO}+1
    total=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs; commit;") )
    let kline=${LINENO}+1

@@ -33,4 +33,4 @@ pmask=007
 dbname=rlist.db
 
 # Job run directory. This should be common to all servers
-jobdir=/rdcprojects/tr00612/programs/mckin013/jobs
+jobdir=/tmp/pmon
