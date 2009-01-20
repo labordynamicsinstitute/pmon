@@ -35,7 +35,7 @@ EOF
 #*********************************************************
 # Parse Options
 #*********************************************************
-while getopts ":hdyf:l:s:" opt; do
+while getopts ":hdyf:l:n:" opt; do
    case "$opt" in
       h ) help=yes ;;
       d ) defaults=yes ;;
@@ -70,7 +70,7 @@ confdir=$(dirname $(pwd $(dirname $0)))
 [[ -f $PMON_CONF ]] || create_pmon_conf
 . $PMON_CONF
 # where is the DB - could be overridden?
-[[ -z $DB_LOC ]] && DB_LOC=$(dirname $0)/../run/db
+[[ -z $DB_LOC ]] && DB_LOC=${confdir}/run/db
 # this should be parsed from the config file
 #[[ -z $dbname ]] && dbname=rlist.db
 [[ -f $DB_LOC/$dbname ]] && exists_db="[WARNING: exists!]" || exists_db=

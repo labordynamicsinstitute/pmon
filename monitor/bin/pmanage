@@ -1,6 +1,7 @@
 #!/bin/bash
 # Management program for pmon daemon
-# Version 0.3
+# $Id$
+# $URL$
 
 #*********************************************************
 # Find location of bin and confdir directories
@@ -10,22 +11,50 @@ cd $(dirname $0)
 confdir=$(dirname $(pwd $(dirname $0)))
 cd $cur
 
+#************************************************************
+# parse args
+#************************************************************
+set -- $*
+action=$1
+if [[  -z $2 ]]
+then
+    node=$(hostname)
+else
+    node_select=yes
+    node=$2
+fi
+myhost=$(hostname)
+
 #*********************************************************
 # Check for existence of pmon.conf
 #*********************************************************
-if [ -f ${confdir}/library/config/pmon.conf ]
-then
-   source ${confdir}/library/config/pmon.conf 
+   # check for config file
+   PMON_CONF=${confdir}/library/config/pmon.$myhost.conf
+   if [ ! -f $PMON_CONF ]
+   then
+      echo "pmon: did not find conf for $myhost, searching for generic conf"
+      PMON_CONF=${confdir}/library/config/pmon.conf
+   fi
+   # Read config file
+   if [ ! -f $PMON_CONF ]
+   then
+      echo "pmanage: ERROR"
+      echo "pmon.conf does not exist"
+      exit 1
+   else
+      echo "Using $PMON_CONF"
+      source $PMON_CONF
+   fi
+
    cdir=${confdir%%/}
    jdir=${jobdir%%/}
    plim=${plimit}
    nval=${nadj}
    dname=${cdir}/run/db/${dbname}
-else
-   echo "pmanage: ERROR"
-   echo "pmon.conf does not exist"
-   exit 1
-fi
+
+# set other node-specific parameters
+
+   pidfile=${cdir}/run/$node/pmon.pid 
 
 #*********************************************************
 # Check for existence of lock file
@@ -49,24 +78,25 @@ then
    fi
 fi
 
+
 #*********************************************************
 #Process one allowed argument
 #*********************************************************
-case "$1" in
-   start)
+function start_pmon
+{
    # Start the daemon
-   if [ -f ${cdir}/run/pmon.pid ]
+   if [ -f $pidfile ]
    then
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
       if (( ${#prunt} > 0 ))
       then
          echo "pmanage: ERROR"
          echo "pmon is already running"
          exit 1
       fi
-      ${confdir}/bin/pmon ${confdir}/library/config/pmon.conf
+      ${confdir}/bin/pmon $PMON_CONF
       sleep 1
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile ) | grep -v PID)
       if (( ${#prunt} > 0 ))
       then
          echo " "
@@ -78,24 +108,27 @@ case "$1" in
          echo " "
       fi 
    else
-      ${confdir}/bin/pmon ${confdir}/library/config/pmon.conf
+      ${confdir}/bin/pmon $PMON_CONF
       if (( ${?} > 0 ))
       then
          exit 1
       else
          sleep 1
-         prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+         prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
          echo " "
          echo "Pmon has PID= " $prunt
          echo " "
       fi
    fi
-   ;;
-   stop)
+}
+
+#************************************************************
    # Stop the daemon
-   if [ -f ${cdir}/run/pmon.pid ]
+function stop_pmon
+{
+   if [ -f $pidfile ]
    then
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
       if (( ${#prunt} == 0 ))
       then
          echo "pmanage: ERROR"
@@ -116,12 +149,15 @@ case "$1" in
    echo " "
    echo "To stop pmon from being killed type <ctrl>-C"
    sleep 5
-   kill ${prunt}
-   ;;
-   reload)
-   if [ -f ${cdir}/run/pmon.pid ]
+   [[ $myhost = $node ]] && kill ${prunt}
+}
+
+#************************************************************
+function reload_pmon
+{ 
+   if [ -f $pidfile ]
    then
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
       if (( ${#prunt} == 0 ))
       then
          echo "pmanage: ERROR"
@@ -137,19 +173,21 @@ case "$1" in
    echo " "
    echo "---------------------------------------------------------"
    echo "Reloading pmon config file in 5 seconds"
-   echo "location=  ${confdir}/library/config/pmon.conf"
+   echo "location=  $PMON_CONF"
    echo "PID= " $prunt
    echo "---------------------------------------------------------"
    echo " "
    echo "To stop config file from being reloaded type <ctrl>-C"
    sleep 5
-   kill -HUP ${prunt}
-   ;;
-   pause)
+   [[ $myhost = $node ]] && kill -HUP ${prunt}
+}
+#************************************************************
    # Stop Launching new jobs
-   if [ -f ${cdir}/run/pmon.pid ]
+function pause_pmon
+{
+   if [ -f $pidfile ]
    then
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
       if (( ${#prunt} == 0 ))
       then
          echo "pmanage: ERROR"
@@ -189,13 +227,15 @@ case "$1" in
    echo " "
    echo "To continue launching new jobs type <ctrl>-C"
    sleep 5
-   kill -USR1 ${prunt}
-   ;;
-   resume)
+   [[ $myhost = $node ]] && kill -USR1 ${prunt}
+}
+#*********************************************************************
    # Resume Launching new jobs
-   if [ -f ${cdir}/run/pmon.pid ]
+function resume_pmon
+{
+   if [ -f $pidfile ]
    then
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
       if (( ${#prunt} == 0 ))
       then
          echo "pmanage: ERROR"
@@ -238,7 +278,7 @@ case "$1" in
    echo " "
    echo "To stop resume of pmon daemon type <ctrl>-C"
    sleep 5
-   kill -USR2 ${prunt}
+   [[ $myhost = $node ]] && kill -USR2 ${prunt}
    if [ -f "${dname}.lockfile" ]
    then
       pnum=$(cat "${dname}.lockfile")
@@ -256,12 +296,14 @@ case "$1" in
          fi
       fi
    fi
-   ;;
-   idle)
+}
+#************************************************************
+function idle_pmon
+{
    # Stop pmon from accessing database and monitoring jobs
-   if [ -f ${cdir}/run/pmon.pid ]
+   if [ -f $pidfile ]
    then
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
       if (( ${#prunt} == 0 ))
       then
          echo "pmanage: ERROR"
@@ -308,11 +350,13 @@ case "$1" in
    echo "To continue at current operating status type <ctrl>-C"
    sleep 5
    echo "0" > "${dname}.lockfile" 
-   ;;
-   status)
-   if [ -f ${cdir}/run/pmon.pid ]
+}
+#************************************************************
+function status_pmon
+{
+   if [ -f $pidfile ]
    then
-      prunt=$(ps -o pid $(cat ${cdir}/run/pmon.pid) | grep -v PID)
+      prunt=$(ps -o pid $(cat $pidfile) | grep -v PID)
       if (( ${#prunt} > 0 ))
       then
          state=active
@@ -358,10 +402,69 @@ case "$1" in
    fi
    echo "-----------------------------------------------------------------------------"
    echo " "
+}
+#************************************************************
+function usage
+{
+   echo "Usage: pmanage {start|stop|reload|pause|resume|idle|status}"
+   echo "See http://lservices.vrdc.cornell.edu/mediawiki/index.php/KevPMON for more info"
+
+}
+
+function print_warning
+{
+     echo "Will attempt to $action pmon remotely"
+     echo "Result cannot be guaranteed yet."
+}
+
+#************************************************************
+# run it all
+#************************************************************
+
+case "$action" in
+   start)
+   # Start the daemon
+   echo $node = $myhost
+   if [[ $node = $myhost ]]
+   then
+     start_pmon 
+   else
+     echo "Cannot do $action remotely"
+     usage
+     exit 2
+   fi     
+   ;;
+   stop)
+   # Stop the daemon
+   [[ $node = $myhost ]] || print_warning
+   stop_pmon
+   ;;
+
+   reload)
+   [[ $node = $myhost ]] || print_warning
+   reload_pmon 
+   ;;
+
+   pause)
+   [[ $node = $myhost ]] || print_warning
+   pause_pmon 
+   ;;
+
+   resume)
+   [[ $node = $myhost ]] || print_warning
+   resume_pmon
+   ;;
+
+   idle)
+   [[ $node = $myhost ]] || print_warning
+   idle_pmon
+   ;;
+
+   status)
+   status_pmon $node
    ;;
    *)
-   echo "Usage: pmanage {start|stop|reload|pause|resume|idle|status}"
-   echo "See http://lservices.ciser.cornell.edu/mediawiki/index.php/KevPMON for more info"
+   usage
    exit 1
    ;;
 esac

@@ -153,7 +153,7 @@ then
    else
       ${ssidbin} ${cdir}/bin/pmon setsidxxx < /dev/null >> ${cdir}//run/$myhost/log/pmon.log 2>> ${cdir}//run/$myhost/log/pmon.log &
    fi
-   echo $! > ${cdir}/run/pmon.pid
+   echo $! > ${cdir}/run/$myhost/pmon.pid
    exit 0
 fi
 
@@ -197,7 +197,7 @@ umask $pmask
 cd /
 
 # Create a dummy pid file for nostart phase
-echo "0" > ${cdir}/run/pid/pid_0000_0000
+echo "0" > ${cdir}/run/$myhost/pid/pid_0000_0000
 
 # Create a status file
 if [ ! -f ${cdir}/run/pmon.$myhost.status ]
@@ -246,10 +246,10 @@ function fstop {
            echo "fstop: PPID= ${pid} PID= ${j} killed"
         done
      fi
-     if [ -f ${cdir}/run/pid/${pid_file} ]
+     if [ -f ${cdir}/run/$myhost/pid/${pid_file} ]
      then
         let kline=${LINENO}+1
-        rc_status=$(kcat ${kline} ${cdir}/run/pid/${pid_file})
+        rc_status=$(kcat ${kline} ${cdir}/run/$myhost/pid/${pid_file})
         if (( ${#rc_status} > 0 ))
         then
            true
@@ -588,10 +588,10 @@ do
             status=$(dbdown ${kline} ${dname} "begin; SELECT status FROM jobs WHERE rkey=${i}; commit;")
             if [ "${tstart}" == "yes" ] && (( ${#pid_file} > 0 )) && (( ${#status} > 0 ))
             then
-               if [ -f ${cdir}/run/pid/${pid_file} ]
+               if [ -f ${cdir}/run/$myhost/pid/${pid_file} ]
                then
                   let kline=${LINENO}+1
-                  rc_status=$(kcat ${kline} ${cdir}/run/pid/${pid_file})
+                  rc_status=$(kcat ${kline} ${cdir}/run/$myhost/pid/${pid_file})
                   if (( ${#rc_status} > 0 ))
                   then
                      if (( $rc_status == 0 ))
