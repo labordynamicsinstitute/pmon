@@ -11,6 +11,7 @@
 -- *****************************************************
 CREATE TABLE jobs (rkey INTEGER PRIMARY KEY,
                    dlabel TEXT NOT NULL DEFAULT "none",
+                   server TEXT NOT NULL DEFAULT "none",
                    pre_cmd TEXT NOT NULL DEFAULT "pre.bash",
                    pre_args TEXT NOT NULL DEFAULT "none",
                    pre_stat TEXT NOT NULL DEFAULT "nostart"
@@ -206,6 +207,7 @@ END;
 CREATE TABLE jobslog (lkey INTEGER PRIMARY KEY,
                       rkey INTEGER,
                       dlabel TEXT,
+		      server TEXT,
                       pre_stat TEXT,
                       pre_start TEXT,
                       pre_stop TEXT,
@@ -227,6 +229,7 @@ CREATE TABLE jobslog (lkey INTEGER PRIMARY KEY,
                       tfinish TEXT,
                       new_rkey INTEGER,
                       new_dlabel TEXT,
+                      new_server TEXT,
                       new_pre_stat TEXT,
                       new_pre_start TEXT,
                       new_pre_stop TEXT,
@@ -254,23 +257,23 @@ CREATE TABLE jobslog (lkey INTEGER PRIMARY KEY,
 -- *****************************************************
 CREATE TRIGGER update_jobslog AFTER UPDATE ON jobs
 BEGIN
-   INSERT INTO jobslog (rkey, dlabel, pre_stat, pre_start, pre_stop,
+   INSERT INTO jobslog (rkey, dlabel, server, pre_stat, pre_start, pre_stop,
                pre_fail_count, pre_exit_status, main_stat, main_start,
                main_stop, main_fail_count, main_exit_status, post_stat,
                post_start, post_stop, post_exit_status, status, pid_file, pid,
                tstart, tfinish,
-               new_rkey, new_dlabel, new_pre_stat, new_pre_start, new_pre_stop,
+               new_rkey, new_dlabel, new_server, new_pre_stat, new_pre_start, new_pre_stop,
                new_pre_fail_count, new_pre_exit_status, new_main_stat, new_main_start,
                new_main_stop, new_main_fail_count, new_main_exit_status, new_post_stat,
                new_post_start, new_post_stop, new_post_exit_status, new_status,
                new_pid_file, new_pid, new_tstart, new_tfinish, sql_action, time_action)
 
-       values(old.rkey, old.dlabel, old.pre_stat, old.pre_start, old.pre_stop,
+       values(old.rkey, old.dlabel, old.server, old.pre_stat, old.pre_start, old.pre_stop,
        old.pre_fail_count, old.pre_exit_status, old.main_stat, old.main_start,
        old.main_stop, old.main_fail_count, old.main_exit_status, old.post_stat,
        old.post_start, old.post_stop, old.post_exit_status, old.status,
        old.pid_file, old.pid, old.tstart, old.tfinish,
-       new.rkey, new.dlabel, new.pre_stat, new.pre_start, new.pre_stop,
+       new.rkey, new.dlabel, new.server, new.pre_stat, new.pre_start, new.pre_stop,
        new.pre_fail_count, new.pre_exit_status, new.main_stat, new.main_start,
        new.main_stop, new.main_fail_count, new.main_exit_status, new.post_stat,
        new.post_start, new.post_stop, new.post_exit_status, new.status,
@@ -282,13 +285,13 @@ END;
 -- *****************************************************
 CREATE TRIGGER insert_jobslog AFTER INSERT ON jobs
 BEGIN
-   INSERT INTO jobslog (new_rkey, new_dlabel, new_pre_stat, new_pre_start, new_pre_stop,
+   INSERT INTO jobslog (new_rkey, new_dlabel, new_server, new_pre_stat, new_pre_start, new_pre_stop,
                new_pre_fail_count, new_pre_exit_status, new_main_stat, new_main_start,
                new_main_stop, new_main_fail_count, new_main_exit_status, new_post_stat,
                new_post_start, new_post_stop, new_post_exit_status, new_status,
                new_pid_file, new_pid, new_tstart, new_tfinish, sql_action, time_action)
 
-       values(new.rkey, new.dlabel, new.pre_stat, new.pre_start, new.pre_stop,
+       values(new.rkey, new.dlabel, new.server, new.pre_stat, new.pre_start, new.pre_stop,
        new.pre_fail_count, new.pre_exit_status, new.main_stat, new.main_start,
        new.main_stop, new.main_fail_count, new.main_exit_status, new.post_stat,
        new.post_start, new.post_stop, new.post_exit_status, new.status,
@@ -300,13 +303,13 @@ END;
 -- *****************************************************
 CREATE TRIGGER delete_jobslog AFTER DELETE ON jobs
 BEGIN
-   INSERT INTO jobslog (rkey, dlabel, pre_stat, pre_start, pre_stop,
+   INSERT INTO jobslog (rkey, dlabel, server, pre_stat, pre_start, pre_stop,
                pre_fail_count, pre_exit_status, main_stat, main_start,
                main_stop, main_fail_count, main_exit_status, post_stat,
                post_start, post_stop, post_exit_status, status,
                pid_file, pid, tstart, tfinish, sql_action, time_action)
 
-       values(old.rkey, old.dlabel, old.pre_stat, old.pre_start, old.pre_stop,
+       values(old.rkey, old.dlabel, old.server, old.pre_stat, old.pre_start, old.pre_stop,
        old.pre_fail_count, old.pre_exit_status, old.main_stat, old.main_start,
        old.main_stop, old.main_fail_count, old.main_exit_status, old.post_stat,
        old.post_start, old.post_stop, old.post_exit_status, old.status,
@@ -316,4 +319,28 @@ END;
 --  Setting Page Cache to a Larger Value
 -- *****************************************************
 pragma default_cache_size=25000;
+
+-- *****************************************************
+-- serveraction table: Keeps track of commands and status of servers
+-- *****************************************************
+
+
+CREATE TABLE serveraction (skey INTEGER PRIMARY KEY,
+		      server TEXT,
+                      server_conf TEXT,
+                      pending_command TEXT,
+                      pre_cmd TEXT,
+                      pre_cmd_exit_status INTEGER,
+                      status  TEXT,
+		      status_time TEXT);
+
+-- *****************************************************
+-- pending_command variable triggers
+-- *****************************************************
+CREATE TRIGGER update_pre_cmd AFTER UPDATE OF pending_command ON serveraction
+BEGIN
+   UPDATE serveraction SET 
+   pre_cmd=old.pending_command
+      WHERE rowid=new.rowid and new.pending_command = "";
+END;
 

@@ -11,5 +11,8 @@ echo "PID= " $$
 #Update PID file
 echo "2" > ${cdir}/run/pid/pid_main_$$
 # Start SAS job
-/usr/local/bin/sas ${cdir}/library/sasprogs/fcreate.sas -set dlabel $dlabel -set work /temporary/saswork2/tr0612mckin013/daemon/${dlabel} -log ${jdir}/${dlabel}/fcreate.log -print ${jdir}/${dlabel}/fcreate.lst
+#/usr/local/bin/sas ${cdir}/library/sasprogs/fcreate.sas -set dlabel $dlabel -set work /temporary/saswork2/tr0612mckin013/daemon/${dlabel} -log ${jdir}/${dlabel}/fcreate.log -print ${jdir}/${dlabel}/fcreate.lst
+echo "$(date) Starting job" > ${jdir}/${dlabel}/mylog
+sleep 30
+echo "$(date) Ending job" >> ${jdir}/${dlabel}/mylog
 echo "${?}" > ${cdir}/run/pid/pid_main_$$

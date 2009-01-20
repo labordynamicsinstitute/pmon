@@ -20,20 +20,30 @@ then
    help=yes
 fi
 
-usage="Usage: psetup [-h] [-f {dbfile}] [-l {loadfile}] [-y for force overwrite] 
-        [-d for all defaults]"
+function usage
+{
+cat <<EOF
+ Usage: psetup [-h] 
+               [-f {dbfile}] 
+               [-l {loadfile}] 
+               [-y for force overwrite] 
+	       [-s {servername}]
+               [-d for all defaults]
 
+EOF
+}
 #*********************************************************
 # Parse Options
 #*********************************************************
-while getopts ":hdyf:l:" opt; do
+while getopts ":hdyf:l:s:" opt; do
    case "$opt" in
       h ) help=yes ;;
       d ) defaults=yes ;;
       f ) fname=$OPTARG ;;
       l ) loadfile=$OPTARG ;;
+      s ) myhost=$OPTARG ;;
       y ) force=yes ;;
-      \?|*) echo $usage
+      \?|*) usage
           exit 1 ;;
    esac
 done
@@ -41,7 +51,7 @@ done
 if [ "$help" == "yes" ]
 then
    echo "$0: help option called, program exiting"
-   echo $usage
+   usage
    echo "See http://lservices.vrdc.cornell.edu/mediawiki/index.php/KevPMON for more info"
    exit 0
 fi
@@ -50,8 +60,11 @@ fi
 function default_config
 {
 # where is pmon configured
+[[ -z $myhost ]] && myhost=$(hostname)
 [[ -z $PMON_CONF_LOC ]] && PMON_CONF_LOC=$(dirname $0)/../library/config
-[[ -z $PMON_CONF ]] && PMON_CONF=$PMON_CONF_LOC/pmon.conf
+[[ -z $PMON_RUN_LOC ]] && PMON_RUN_LOC=$(dirname $0)/../run/$myhost
+[[ -z $PMON_CONF ]] && PMON_CONF=$PMON_CONF_LOC/pmon.${myhost}.conf
+[[ -f $PMON_CONF ]] || PMON_CONF=$PMON_CONF_LOC/pmon.conf
 . $PMON_CONF
 # where is the DB - could be overridden?
 [[ -z $DB_LOC ]] && DB_LOC=$(dirname $0)/../run/db
@@ -75,10 +88,13 @@ cat <<EOF
 
   $0 - setting up the database for PMON
 
-  PMON configuration   : $PMON_CONF
+  Hostname               : $myhost
+  PMON configuration     : $PMON_CONF
+  PMON run location      : $PMON_RUN_LOC
   
-  Location of database : $DB_LOC/$dbname $exists_db
-  Location of load file: $loadfile $exists_loadfile
+  Location of database   : $DB_LOC/$dbname $exists_db
+  Location of create file: $createfile $exists_createfile
+  Location of load file  : $loadfile $exists_loadfile
 
 EOF
 
@@ -120,6 +136,30 @@ fi
 sqlite3  $DB_LOC/$dbname < $createfile
 }
 
+#--------------------create runtime locations --------------------
+function create_runloc
+{
+if [[ ! -d $PMON_RUN_LOC/log ]]
+then
+  echo "  Creating $PMON_RUN_LOC/log"
+  mkdir -p  $PMON_RUN_LOC/log
+fi
+if [[ ! -d $PMON_RUN_LOC/pid ]]
+then
+  echo "  Creating $PMON_RUN_LOC/pid"
+  mkdir -p  $PMON_RUN_LOC/pid
+fi
+if [[ ! -d $PMON_RUN_LOC/log || ! -d $PMON_RUN_LOC/pid ]]
+then
+    echo "Problem creating $PMON_RUN_LOC log or pid directory"
+    echo "Exiting"
+    exit 2
+else
+    echo "Success."
+fi
+
+}
+
 #-------------------- load db --------------------
 function load_db
 {
@@ -130,15 +170,38 @@ sqlite3  $DB_LOC/$dbname < $loadfile
 function check_db
 {
 numinserts=$(grep "INSERT into jobs" $loadfile| wc -l)
-numjobs=$(sqlite3 $DB_LOC/$dbname "select count(*) from jobs")
+numjobs=$(sqlite3 $DB_LOC/$dbname "SELECT COUNT(*) FROM JOBS")
 [[ $numinserts = $numjobs ]] && load_success=OK || load_success=ERROR
+queried_conf=$(sqlite3 $DB_LOC/$dbname "SELECT server_conf FROM serveraction WHERE server='$myhost';")
+
 echo "------------------------------------------------------------"
 echo "  Loadfile has $numinserts inserts into jobs table."
 echo "  Database has $numjobs entries in jobs table."
 echo "  Load status: $load_success"
+echo ""
+if [[ ! -d $PMON_RUN_LOC/log || ! -d $PMON_RUN_LOC/pid ]]
+then
+    echo "Problem creating $PMON_RUN_LOC log or pid directory"
+    echo "Exiting"
+    exit 2
+else
+    echo "  Directories: $PMON_RUN_LOC exists."
+fi
+if [[ -z $queried_conf ]]
+then
+echo "  Server $myhost not found in table SERVERACTION: PROBLEM"
+else
+echo "  Server $myhost is using $queried_conf"
+fi
 echo "------------------------------------------------------------"
 
 
+}
+
+#-------------------- insert server into db --------------------
+function insert_server
+{
+sqlite3 $DB_LOC/$dbname "begin; INSERT into serveraction (server, server_conf) VALUES ('$myhost','$PMON_CONF'); commit;"
 }
 
 #-------------------- now run it all --------------------
@@ -146,8 +209,10 @@ echo "------------------------------------------------------------"
 
 default_config
 print_info
+create_runloc
 create_db
 load_db
+insert_server
 check_db
 
 
