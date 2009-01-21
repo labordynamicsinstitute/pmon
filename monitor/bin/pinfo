@@ -16,6 +16,7 @@ for i in "$@"; do
       -p) re=yes ;;
       -d) dl=yes ;;
       -n) nr=yes ;;
+      -b) br=yes ;;
      -sf) echo "pinfo: please put a space between all options"; exit 1;;
      -sp) echo "pinfo: please put a space between all options"; exit 1;;
      -sd) echo "pinfo: please put a space between all options"; exit 1;;
@@ -33,6 +34,7 @@ cat <<EOF
   Usage: pinfo 
            [-h] help 
            [-s] summary
+           [-b] brief node status
            [-f {dbfile}] 
            [-p {all|active|fail|nostart|pre|main|post|finish}] 
            [-d {dlabel}]
@@ -44,10 +46,11 @@ EOF
 #*********************************************************
 # Parse Options
 #*********************************************************
-while getopts ":hsf:d:p:n:" opt; do
+while getopts ":hbsf:d:p:n:" opt; do
    case "$opt" in
       h ) help=yes ;;
       s ) summary=yes ;;
+      b ) brief=yes ;;
       f ) fname=$OPTARG ;;
       p ) report=$OPTARG ;;
       d ) dlabel=$OPTARG ;;
@@ -262,6 +265,23 @@ function errtrap {
    echo "ERROR line $1: Command exited with status $es"
 }
 trap 'errtrap $LINENO' ERR
+
+#*********************************************************
+# query server status
+#*********************************************************
+
+if [ "$brief" == "yes" ]
+then
+  echo "--------------------------------------------------------------------------------"
+  echo "pinfo: Brief node Report (-b)"
+  echo "date :" $(date -u)
+  echo "file :" $fname
+  echo "node :" $([[ $nr = yes ]] && echo for node $myhost|| echo for all nodes)
+  echo "--------------------------------------------------------------------------------"
+  sqlite3 -header -column $fname "SELECT node,status,node_load1,node_load5,node_load15,node_df FROM nodeaction $NODERESTRICT ;" |\
+     sed 's/node_load\(..\)/Load \1    /g' | sed 's/node_df/Free space/' | sed 's/status/Status/' | sed 's/node/Node/'
+fi
+
 
 #*********************************************************
 # Summary of database
