@@ -278,7 +278,11 @@ then
   echo "file :" $fname
   echo "node :" $([[ $nr = yes ]] && echo for node $myhost|| echo for all nodes)
   echo "--------------------------------------------------------------------------------"
-  sqlite3 -header -column $fname "SELECT node,status,node_load1,node_load5,node_load15,node_df FROM nodeaction $NODERESTRICT ;" |\
+  sqlite3 -header -column $fname \
+       "SELECT node,status,node_load1,node_load5,node_load15,
+               node_df 
+        FROM nodeaction 
+              $NODERESTRICT ;" |\
      sed 's/node_load\(..\)/Load \1    /g' | sed 's/node_df/Free space/' | sed 's/status/Status/' | sed 's/node/Node/'
 fi
 
