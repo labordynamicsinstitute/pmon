@@ -182,7 +182,7 @@ nval=${nadj}
 dname=${cdir}/run/db/${dbname}
 ran_range=4 # range of random locks pause
 dran_range=$ran_range
-let dran_range += $ran_range # double the range
+let "dran_range += $ran_range" # double the range
 
 # Turn Debugging On(1) or Off(0)
 debug=0
