@@ -555,7 +555,7 @@ do
    # update node database with status
    unset srv_status
    let kline=${LINENO}+1   
-   srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='running', status_time=DATETIME("now") WHERE  node = '$myhost'; commit;") )
+   srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='running', status_time=DATETIME('now') WHERE  node = '$myhost'; commit;") )
    echo "Set node status."
 
    # Check and remove process loop
