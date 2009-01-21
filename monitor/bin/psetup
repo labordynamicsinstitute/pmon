@@ -154,7 +154,7 @@ then
    fi
 fi
 umask $pmask
-
+touch $DB_LOC/$dbname
 sqlite3  $DB_LOC/$dbname < $createfile
 }
 
