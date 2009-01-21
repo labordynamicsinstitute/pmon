@@ -68,7 +68,7 @@ confdir=$(dirname $(pwd $(dirname $0)))
 [[ -f $PMON_CONF ]] || PMON_CONF=$PMON_CONF_LOC/pmon.conf
 # if this still does not exist, then lets do something about it
 [[ -f $PMON_CONF ]] || create_pmon_conf
-. $PMON_CONF
+source $PMON_CONF
 # where is the DB - could be overridden?
 [[ -z $DB_LOC ]] && DB_LOC=${confdir}/run/db
 # this should be parsed from the config file
@@ -80,6 +80,8 @@ confdir=$(dirname $(pwd $(dirname $0)))
 # the file to load into the DB
 [[ -z $loadfile ]] && loadfile=$PMON_CONF_LOC/load_jobs.sql
 [[ -f $loadfile ]] && exists_loadfile="[OK]" || exists_loadfile="[WARNING: not there]"
+
+umask $pmask
 }
 
 #-------------------- create pmon conf --------------------
@@ -151,6 +153,8 @@ then
      rm -i $DB_LOC/$dbname
    fi
 fi
+umask $pmask
+
 sqlite3  $DB_LOC/$dbname < $createfile
 }
 
