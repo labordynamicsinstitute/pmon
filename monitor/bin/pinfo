@@ -382,9 +382,9 @@ then
      fpid=$(sqlite3 ${fname} "SELECT pid_file FROM jobs WHERE rkey = ${i}")
      case "$status" in
         nostart) estat=0 ;;
-        pre) estat=$(cat "${cdir}/run/pid/${fpid}") ;;
-        main) estat=$(cat "${cdir}/run/pid/${fpid}") ;;
-        post) estat=$(cat "${cdir}/run/pid/${fpid}") ;;
+        pre) estat=$(cat "${cdir}/run/${node}/pid/${fpid}") ;;
+        main) estat=$(cat "${cdir}/run/${node}/pid/${fpid}") ;;
+        post) estat=$(cat "${cdir}/run/${node}/pid/${fpid}") ;;
         fail) fval=$(sqlite3 ${fname} "SELECT pre_stat FROM jobs WHERE rkey = ${i}")
               estat=$(sqlite3 ${fname} "SELECT pre_exit_status FROM jobs WHERE rkey = ${i}")
               if [ "$fval" != "fail" ]
