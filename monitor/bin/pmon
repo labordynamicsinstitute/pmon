@@ -550,12 +550,30 @@ do
    # Make a copy of the database before updating
    cp -f ${dname} ${dname}.backup
 
+   # collect some information
+   load=$(uptime | awk -F: ' { print $4 }' | sed 's/,//g')
+   load1=$(echo $load | awk ' { print $1 } ')
+   load5=$(echo $load | awk ' { print $2 } ')
+   load15=$(echo $load | awk ' { print $3 } ')
+   space=$(df -kP  $jdir | tail -1 | awk ' { print $5 } ')
+
    # now we start modifying
    
-   # update node database with status
+   # are we in the database?
    unset srv_status
-   let kline=${LINENO}+1   
-   srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='running', status_time=DATETIME('now') WHERE  node = '$myhost'; commit;") )
+   let kline=${LINENO}+1
+   srv_status=( $(dbup ${kline} ${dname} "SELECT  status FROM nodeaction  WHERE  node = '$myhost';") )
+   # if empty, then we've never talked to this DB before. Need to update it.
+   if [[ -z $srv_status ]] 
+   then
+       let kline=${LINENO}+1   
+       srv_status=( $(dbup ${kline} ${dname} "begin; INSERT INTO nodeaction (status,status_time,node,node_conf,node_load1,node_load5,node_load15,node_df ) VALUES ('running',DATETIME('now'),'$myhost','$PMON_CONF',$load1,$load5,$load15,'$space'); commit;") )  
+   else
+   # update node database with status
+       unset srv_status
+       let kline=${LINENO}+1   
+       srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='running', status_time=DATETIME('now'), node_load1=$load1, node_load5=$load5, node_load15=$load15, node_df='$space' WHERE  node = '$myhost'; commit;") )
+   fi
    echo "Set node status."
 
    # Check and remove process loop
