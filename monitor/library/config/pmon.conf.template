@@ -21,7 +21,7 @@
 ########################################
  
 # Limit on the number of jobs to run in parallel
-plimit=5
+plimit=4
 
 # Nice adjustment level (run jobs at a lower priority)
 nadj=0
