@@ -211,7 +211,7 @@ then
       until ( set -o noclobber; echo "$$" > "${dname}.lockfile") 2> /dev/null;
       do
          pnum=$(cat "${dname}.lockfile")
-         pmon=$(cat "${cdir}/run/pmon.pid")
+         pmon=$(cat "${cdir}/run/$myhost/pmon.pid")
          echo "DB Lock File Exists, and is held by PID: "  $pnum
          slptime=5
          if [ "${pnum}" == "" ] || [ "${pmon}" == "" ]
