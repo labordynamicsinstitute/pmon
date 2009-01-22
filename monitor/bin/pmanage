@@ -54,7 +54,7 @@ myhost=$(hostname)
 
 # set other node-specific parameters
 
-   pidfile=${cdir}/run/$node/pmon.pid 
+   pidfile=${cdir}/run/$node/pid/pmon.pid 
 
 #*********************************************************
 # Check for existence of lock file
