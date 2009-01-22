@@ -712,56 +712,67 @@ do
    #Get number of new processes to add
    if [ "$pause" = "no" ]
    then
-      njobs=${plim}-${njobs}
       echo " "
       echo "Entering Add New Processes Loop: " $(date -u)
+      #
+      #-------------------- PRE jobs --------------------
+      #
       unset rkeys
-      let kline=${LINENO}+1
-      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre') AND pre_stat IN ('fail')  AND node = '$myhost'  LIMIT ${njobs}; commit;") )
-      echo "Total processes to add: " ${njobs}
-      echo "Processing pre rkeys: " ${rkeys[@]}
-
+      let "njobs = ${plim} - ${njobs}" 
       if (( $njobs > 0 ))
       then
+         let kline=${LINENO}+1
+         rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('pre') AND pre_stat IN ('fail')  AND node = '$myhost'  LIMIT ${njobs}; commit;") )
+         echo "Total processes to add: " ${njobs}
+         echo "Processing pre rkeys: " ${rkeys[@]}
+
          ### Set PRE jobs to run status 
          for i in "${rkeys[@]}"; do
             padd pre
          done
+      else
+         echo "No pre rkeys: " $(date -u)
       fi
-
-      njobs=$njobs-${#rkeys[@]} 
+      #
+      #-------------------- MAIN jobs --------------------
+      #
+      let "njobs = $njobs - ${#rkeys[@]}" 
       unset rkeys
-      let kline=${LINENO}+1
-      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('main') AND main_stat IN ('nostart', 'fail') AND node = '$myhost' LIMIT ${njobs}; commit;") )
-      echo "Total processes to add: " ${njobs}
-      echo "Processing main rkeys: " ${rkeys[@]}
-
       if (( $njobs > 0 ))
       then
+          let kline=${LINENO}+1
+          rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('main') AND main_stat IN ('nostart', 'fail') AND node = '$myhost' LIMIT ${njobs}; commit;") )
+          echo "Total processes to add: " ${njobs}
+          echo "Processing main rkeys: " ${rkeys[@]}
+
           ### Set MAIN jobs to run status
           for i in "${rkeys[@]}"; do
              padd main
          done
       fi
-
-      njobs=$njobs-${#rkeys[@]}
+      #
+      #-------------------- POST jobs --------------------
+      #
+      let "njobs = $njobs - ${#rkeys[@]}"
       unset rkeys
-      let kline=${LINENO}+1
-      rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('post') AND post_stat IN ('nostart', 'fail') AND node = '$myhost' LIMIT ${njobs}; commit;") )
-      echo "Total processes to add: " ${njobs}
-      echo "Processing post rkeys: " ${rkeys[@]}
 
       if (( $njobs > 0 ))
       then
+          let kline=${LINENO}+1
+          rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('post') AND post_stat IN ('nostart', 'fail') AND node = '$myhost' LIMIT ${njobs}; commit;") )
+          echo "Total processes to add: " ${njobs}
+          echo "Processing post rkeys: " ${rkeys[@]}
           ### Set POST jobs to run status
           for i in "${rkeys[@]}"; do
              padd post
          done
+      else
+         echo "No main rkeys: " $(date -u)
       fi
 
       # getting new jobs: this is the only one where we do NOT
       # condition on node name
-      njobs=$njobs-${#rkeys[@]}
+      let "njobs = $njobs - ${#rkeys[@]}"
       unset rkeys
       let kline=${LINENO}+1
       rkeys=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs WHERE status IN ('nostart') AND pre_stat IN ('nostart') LIMIT ${njobs}; commit;") )
@@ -773,8 +784,10 @@ do
           for i in "${rkeys[@]}"; do
              padd nostart
          done
+      else
+         echo "No post rkeys: " $(date -u)
       fi
-   fi
+   fi # end of no-pause loop
    # Write out status of daemon/database across all nodes
    let kline=${LINENO}+1
    total=( $(dbdown ${kline} ${dname} "begin; SELECT rkey FROM jobs; commit;") )
