@@ -262,6 +262,10 @@ function fstop {
      let kline=${LINENO}+1
      dbup ${kline} ${dname} "begin immediate; update jobs set ${status}_stat='fail', ${status}_exit_status=${rc_status} where rkey=${i}; commit;"
   done
+# update the node status
+  update_srv_status stopped
+
+# now handle the lock file
   if [ -f "${dname}.lockfile" ] 
   then
      pnum=$(cat "${dname}.lockfile")
@@ -306,6 +310,10 @@ function fpause {
   echo "fpause function called"
   pause=yes
   echo "Job Launching Paused: " $(date -u)
+# update the node status
+  create_lockfile
+  update_srv_status paused
+  remove_lockfile
 }
 
 function fresume {
@@ -433,6 +441,30 @@ function kcat {
    done
 }
 
+# update node status
+function update_srv_status
+{
+# first argument is status, mandatory
+newstatus=${1:-running}
+# are we in the database? 
+   unset srv_status
+   let kline=${LINENO}+1
+   srv_status=( $(dbup ${kline} ${dname} "SELECT  status FROM nodeaction  WHERE  node = '$myhost';") )
+   # if empty, then we've never talked to this DB before. Need to update it.
+   if [[ -z $srv_status ]] 
+   then
+       let kline=${LINENO}+1   
+       srv_status=( $(dbup ${kline} ${dname} "begin; INSERT INTO nodeaction (status,status_time,node,node_conf,node_load1,node_load5,node_load15,node_df ) VALUES ('${newstatus}',DATETIME('now'),'$myhost','$PMON_CONF',$load1,$load5,$load15,'$space'); commit;") )  
+   else
+   # update node database with status
+       unset srv_status
+       let kline=${LINENO}+1   
+       srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='${newstatus}', status_time=DATETIME('now'), node_load1=$load1, node_load5=$load5, node_load15=$load15, node_df='$space' WHERE  node = '$myhost'; commit;") )
+   fi
+   echo "Node status set."
+
+}
+
 # Arguments
 # 1 run stage (pre main post nostart) 
 function padd {
@@ -499,21 +531,11 @@ function padd {
    fi
 }
 
-#*********************************************************
-#*** Main Daemon While Loop
-#*********************************************************
-
-declare -i njobs
-
-while true
-do
-   # keep config file values constant within each loop iteration
-   cdir=${confdir%%/}
-   jdir=${jobdir%%/}
-   plim=${plimit}
-   nval=${nadj}
-   dname=${cdir}/run/db/${dbname}
-
+#
+# Critical function
+#
+function create_lockfile
+{
    # Check for existence of lock file
    # If the file does not exist then create one
    until ( set -o noclobber; echo "$$" > "${dname}.lockfile") 2> /dev/null;
@@ -545,6 +567,45 @@ do
       sleep $slptime
    done
    echo "PID= $$: Creating DB Lock File: " $(date -u)
+}
+
+function remove_lockfile
+{
+   # Remove the lock file
+   if [ -f "${dname}.lockfile" ]
+   then
+      pnum=$(cat "${dname}.lockfile")
+      if [ "${pnum}" == "" ]
+      then
+         echo "ERROR: lockfile has no PID"
+      else
+         if (( $$ == $pnum ))
+         then
+            echo "PID= $$: Removing DB Lock File: " $(date -u)
+            rm -f ${dname}.lockfile
+         fi
+      fi
+   fi
+
+}
+
+#*********************************************************
+#*** Main Daemon While Loop
+#*********************************************************
+
+declare -i njobs
+
+while true
+do
+   # keep config file values constant within each loop iteration
+   cdir=${confdir%%/}
+   jdir=${jobdir%%/}
+   plim=${plimit}
+   nval=${nadj}
+   dname=${cdir}/run/db/${dbname}
+
+   # create lock file
+   create_lockfile
    # we now have the lock file.
 
    # Make a copy of the database before updating
@@ -559,22 +620,8 @@ do
 
    # now we start modifying
    
-   # are we in the database?
-   unset srv_status
-   let kline=${LINENO}+1
-   srv_status=( $(dbup ${kline} ${dname} "SELECT  status FROM nodeaction  WHERE  node = '$myhost';") )
-   # if empty, then we've never talked to this DB before. Need to update it.
-   if [[ -z $srv_status ]] 
-   then
-       let kline=${LINENO}+1   
-       srv_status=( $(dbup ${kline} ${dname} "begin; INSERT INTO nodeaction (status,status_time,node,node_conf,node_load1,node_load5,node_load15,node_df ) VALUES ('running',DATETIME('now'),'$myhost','$PMON_CONF',$load1,$load5,$load15,'$space'); commit;") )  
-   else
-   # update node database with status
-       unset srv_status
-       let kline=${LINENO}+1   
-       srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='running', status_time=DATETIME('now'), node_load1=$load1, node_load5=$load5, node_load15=$load15, node_df='$space' WHERE  node = '$myhost'; commit;") )
-   fi
-   echo "Set node status."
+   # update the node status
+   update_srv_status running
 
    # Check and remove process loop
    unset rkeys
@@ -765,20 +812,7 @@ do
       echo "INCONSISTENCY: rkeys= " ${rkeys[@]}
    fi
    # Remove the lock file
-   if [ -f "${dname}.lockfile" ]
-   then
-      pnum=$(cat "${dname}.lockfile")
-      if [ "${pnum}" == "" ]
-      then
-         echo "ERROR: lockfile has no PID"
-      else
-         if (( $$ == $pnum ))
-         then
-            echo "PID= $$: Removing DB Lock File: " $(date -u)
-            rm -f ${dname}.lockfile
-         fi
-      fi
-   fi
+   remove_lockfile
    echo "**************************************************************"
-   sleep 60
+   sleep $daemon_check_frequency
 done

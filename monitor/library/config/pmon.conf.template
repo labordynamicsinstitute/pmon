@@ -34,3 +34,6 @@ dbname=rlist.db
 
 # Job run directory. This should be common to all servers
 jobdir=/tmp/pmon
+
+# how often should the daemon check the database
+daemon_check_frequency=60
