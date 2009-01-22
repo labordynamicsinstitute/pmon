@@ -621,7 +621,7 @@ do
    # now we start modifying
    
    # update the node status
-   update_srv_status running
+   [[ "$pause" = "yes" ]] && update_srv_status paused || update_srv_status running
 
    # Check and remove process loop
    unset rkeys
