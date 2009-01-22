@@ -302,6 +302,7 @@ function freload {
   echo "conffile=$(basename $PMON_CONF)"
   echo "dbname= $dbname"
   echo "jobdir= $jobdir"
+  echo "daemon_check_frequency= $daemon_check_frequency"
   echo "---------------------------------------------------------"
   echo " "
 }
