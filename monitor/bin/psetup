@@ -25,17 +25,17 @@ function usage
 cat <<EOF
  Usage: psetup [-h] 
                [-f {dbfile}] 
-               [-l {loadfile}] 
+               [-s skip dbfile creation]
+               [-l {loadfile}] (loadfile=none turns of DB creation) 
                [-y for force overwrite] 
 	       [-n {nodename}]
                [-d for all defaults]
-
 EOF
 }
 #*********************************************************
 # Parse Options
 #*********************************************************
-while getopts ":hdyf:l:n:" opt; do
+while getopts ":hsdyf:l:n:" opt; do
    case "$opt" in
       h ) help=yes ;;
       d ) defaults=yes ;;
@@ -43,6 +43,7 @@ while getopts ":hdyf:l:n:" opt; do
       l ) loadfile=$OPTARG ;;
       n ) myhost=$OPTARG ;;
       y ) force=yes ;;
+      s ) skip=yes ;;
       \?|*) usage
           exit 1 ;;
    esac
@@ -80,6 +81,7 @@ source $PMON_CONF
 # the file to load into the DB
 [[ -z $loadfile ]] && loadfile=$PMON_CONF_LOC/load_jobs.sql
 [[ -f $loadfile ]] && exists_loadfile="[OK]" || exists_loadfile="[WARNING: not there]"
+[[ "$loadfile" = "none" ]] && exists_loadfile="[skipped]"
 
 umask $pmask
 }
@@ -252,9 +254,11 @@ default_config
 print_info
 create_runloc
 create_jobdir
-create_db
-load_db
-#insert_node
-check_db
-
+[[ "$skip" = "yes" ]] || create_db
+if [[ "$exists_loadfile" = "[OK]" ]] 
+then
+ load_db
+ #insert_node
+ check_db
+fi
 

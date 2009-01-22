@@ -153,7 +153,7 @@ then
    else
       ${ssidbin} ${cdir}/bin/pmon setsidxxx < /dev/null >> ${cdir}//run/$myhost/log/pmon.log 2>> ${cdir}//run/$myhost/log/pmon.log &
    fi
-   echo $! > ${cdir}/run/$myhost/pmon.pid
+   echo $! > ${cdir}/run/$myhost/pid/pmon.pid
    exit 0
 fi
 
