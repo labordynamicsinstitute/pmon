@@ -279,11 +279,15 @@ then
   echo "node :" $([[ $nr = yes ]] && echo for node $myhost|| echo for all nodes)
   echo "--------------------------------------------------------------------------------"
   sqlite3 -header -column $fname \
-       "SELECT node,status,node_load1,node_load5,node_load15,
-               node_df 
+       "SELECT node as Node,
+               status as Status,
+               status_time as 'Last seen',
+               node_load1 as 'Load 1',
+               node_load5 as 'Load 5',
+               node_load15 as 'Load 15',
+               node_df as 'Free space'
         FROM nodeaction 
-              $NODERESTRICT ;" |\
-     sed 's/node_load\(..\)/Load \1    /g' | sed 's/node_df/Free space/' | sed 's/status/Status/' | sed 's/node/Node/'
+              $NODERESTRICT ;" 
 fi
 
 
