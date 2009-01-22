@@ -450,6 +450,7 @@ newstatus=${1:-running}
    unset srv_status
    let kline=${LINENO}+1
    srv_status=( $(dbup ${kline} ${dname} "SELECT  status FROM nodeaction  WHERE  node = '$myhost';") )
+   echo "$(date) Previous node status:  ${srv_status:-not set}."
    # if empty, then we've never talked to this DB before. Need to update it.
    if [[ -z $srv_status ]] 
    then
@@ -461,7 +462,7 @@ newstatus=${1:-running}
        let kline=${LINENO}+1   
        srv_status=( $(dbup ${kline} ${dname} "begin; UPDATE nodeaction SET status='${newstatus}', status_time=DATETIME('now'), node_load1=$load1, node_load5=$load5, node_load15=$load15, node_df='$space' WHERE  node = '$myhost'; commit;") )
    fi
-   echo "Node status set."
+   echo "$(date) Node status set to ${newstatus}."
 
 }
 
