@@ -212,7 +212,7 @@ sqlite3  $DB_LOC/$dbname < $loadfile
 #-------------------- check db --------------------
 function check_db
 {
-numinserts=$(grep "INSERT into jobs" $loadfile| wc -l)
+numinserts=$(cat $loadfile | tr [A-Z] [a-z] | grep "insert into jobs" | wc -l)
 numjobs=$(sqlite3 $DB_LOC/$dbname "SELECT COUNT(*) FROM JOBS")
 [[ $numinserts = $numjobs ]] && load_success=OK || load_success=ERROR
 queried_conf=$(sqlite3 $DB_LOC/$dbname "SELECT node_conf FROM nodeaction WHERE node='$myhost';")
