@@ -498,6 +498,9 @@ function padd {
       then 
          pid=$!
          pid_file=pid_${sect}_${pid}
+	 # touch the PID file to ensure it exists
+	 touch ${cdir}/run/${myhost}/pid/${pid_file}
+	 # update the db
          if (( ${#pid} > 0 )) && (( ${#pid_file} > 0 ))
          then
             let kline=${LINENO}+1
