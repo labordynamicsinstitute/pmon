@@ -276,6 +276,7 @@ then
   echo "pinfo: Brief node Report (-b)"
   echo "date :" $(date -u)
   echo "file :" $fname
+  echo "jdir :" ${jobdir%%*=}
   echo "node :" $([[ $nr = yes ]] && echo for node $myhost|| echo for all nodes)
   echo "--------------------------------------------------------------------------------"
   sqlite3 -header -column $fname \
@@ -317,6 +318,7 @@ then
   echo "pinfo: Summary Report (-s)"
   echo "date :" $(date -u)
   echo "file :" $fname
+  echo "jdir :" ${jobdir%%*=}
   echo "node :" $myhost
   echo "-----------------------------------------------------------------------------"
   echo "Run Group Overview $([[ $nr = yes ]] && echo for node $myhost|| echo for all nodes)"
@@ -356,6 +358,7 @@ then
   echo "pinfo: Detailed Report (-p)"
   echo "date :" $(date -u)
   echo "file :" $fname
+  echo "jdir :" ${jobdir%%*=}
   echo "--------------------------------------------------------------------------------------"
   echo $report "records"
   echo "--------------------------------------------------------------------------------------"
@@ -472,6 +475,7 @@ then
   echo "pinfo : Single Group Report (-d)"
   echo "date  :" $(date -u)
   echo "file  :" $fname
+  echo "jdir  :" ${jobdir%%*=}
   echo "dlabel:" $dlabel 
   echo "node  :" $(sqlite3 ${fname} "SELECT node FROM jobs WHERE dlabel='$dlabel'")
   echo "-----------------------------------------------------------------------------"
