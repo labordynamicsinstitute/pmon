@@ -1,5 +1,12 @@
 /*** test program ***/;
 
+%letcdir=%sysget(cdir);
+%let dlabel=&sysparm.;
+/* alternatively */
+%let dlabel2=%sysget(dlabel);
+%let jdir=%sysget(jdir);
+ 
+
 options ls=256 mprint mlogic symbolgen;
 
 %put JOBID= &sysjobid;

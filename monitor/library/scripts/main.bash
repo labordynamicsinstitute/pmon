@@ -5,9 +5,9 @@
 # called. Any other arguments needed by the script would
 # need to be passed through by a file.
 # 
-jdir=$1
-dlabel=$2
-cdir=$3
+export jdir=$1
+export dlabel=$2
+export cdir=$3
 
 # Some derived variables. Note that these should be
 # kept for later compulsory processing.
@@ -26,14 +26,17 @@ echo "$(date) Starting job"
 echo "jdir= " $jdir
 echo "dlabel= " $dlabel "(state)"
 echo "PID= " $pid
+# sample SAS job that passes the state via -sysparm
+sas ${cdir}/library/sasprogs/read_in_state.sas -sysparm $2 -log ${jdir}/${dlabel}/read_in_state.log -print ${jdir}/${dlabel}/read_in_state.lst
 
 #Update PID file. This is optional, but see the end of the script.
-echo "2" > $pid_file
+echo "${?}"  > $pid_file
 
 echo "$(date) Ending job" 
 #=================================================================
 # 
-# The following line is COMPULSORY. Unless pmon finds
+# The following line is COMPULSORY if no such line is above. 
+# Unless pmon finds
 # a ZERO ('0') in the pid_file, it will consider the job
 # failed.
 #
