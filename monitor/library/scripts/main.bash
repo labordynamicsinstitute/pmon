@@ -27,7 +27,7 @@ echo "jdir= " $jdir
 echo "dlabel= " $dlabel "(state)"
 echo "PID= " $pid
 # sample SAS job that passes the state via -sysparm
-sas ${cdir}/library/sasprogs/read_in_state.sas -sysparm $2 -log ${jdir}/${dlabel}/read_in_state.log -print ${jdir}/${dlabel}/read_in_state.lst
+sas ${cdir}/library/sasprogs/fcreate.sas -sysparm $2 -log ${jdir}/${dlabel}/fcreate.log -print ${jdir}/${dlabel}/fcreate.lst
 
 #Update PID file. This is optional, but see the end of the script.
 echo "${?}"  > $pid_file
