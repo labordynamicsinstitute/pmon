@@ -34,7 +34,7 @@ echo "PID= " $pid
       ran_range=30
       slptime=61
       rannum=$RANDOM
-      let "rannum %= $dran_range"
+      let "rannum %= $ran_range"
       let "slptime -= $ran_range"
       let "slptime += $rannum"
 echo "$(date) Ending job" 
